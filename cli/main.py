@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NoUI developer CLI — backend lifecycle, login recording, workflow recording, and MCP servers.
+NoUI developer CLI — backend lifecycle, login recording, workflow recording, MCP servers, and Tabby.
 
 Subcommands:
     start                              - Start the NoUI backend
@@ -24,11 +24,21 @@ Subcommands:
     mcp status <server_id>             - Show status of a generated MCP server
     mcp start <server_id>              - Start a generated MCP server
     mcp stop <server_id>               - Stop a generated MCP server
+
+    tabby status                       - Check Docker Compose services and Tabby API liveness
+    tabby start                        - Start Docker Compose infra and Tabby API
+    tabby stop [--infra]               - Stop the Tabby API process (and optionally Docker Compose)
+    tabby setup [--profiles] [--force] - Full provisioning: agent client + ServiceProfiles + .env
+    tabby session status [--profile]   - Show browser session state for configured profiles
+    tabby session ensure [--profile]   - Ensure a HEALTHY browser session exists
+    tabby session stop [--profile]     - Stop the locally-running worker process
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import getpass
 import json
 import os
 import signal
@@ -39,6 +49,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -57,6 +68,14 @@ BACKEND_URL = f"http://localhost:{NOUI_PORT}"
 TABBY_DIR = NOUI_DIR.parent / "tabby"
 TABBY_API_HOST = os.environ.get("TABBY_API_HOST", "http://localhost:8080")
 ENV_LOCAL = TABBY_DIR / ".env.local"
+ENV_EXAMPLE = TABBY_DIR / ".env.example"
+
+TABBY_PID_FILE = TABBY_DIR / ".tabby-api.pid"
+TABBY_LOG_FILE = TABBY_DIR / ".tabby-api.log"
+TABBY_WORKER_PID_FILE = TABBY_DIR / ".tabby-worker.pid"
+TABBY_WORKER_LOG_FILE = TABBY_DIR / ".tabby-worker.log"
+TABBY_CREDS_CACHE = TABBY_DIR / ".tabby-noui-client.json"
+TABBY_AGENT_CLIENT_NAME = "noui"
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -1117,6 +1136,970 @@ def cmd_mcp_stop(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Tabby cache helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_cache() -> dict[str, Any]:
+    if not TABBY_CREDS_CACHE.exists():
+        return {}
+    try:
+        return json.loads(TABBY_CREDS_CACHE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_cache(cache: dict[str, Any]) -> None:
+    TABBY_CREDS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    TABBY_CREDS_CACHE.write_text(json.dumps(cache, indent=2) + "\n")
+
+
+def _write_env_vars(env_file: Path, updates: dict[str, str]) -> None:
+    """Upsert key=value lines in env_file, creating it if needed."""
+    existing_lines: list[str] = []
+    if env_file.exists():
+        existing_lines = env_file.read_text().splitlines()
+    replaced: set[str] = set()
+    new_lines: list[str] = []
+    for line in existing_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                new_lines.append(f"{key}={updates[key]}")
+                replaced.add(key)
+                continue
+        new_lines.append(line)
+    for key, val in updates.items():
+        if key not in replaced:
+            new_lines.append(f"{key}={val}")
+    env_file.write_text("\n".join(new_lines) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Tabby Docker Compose helpers
+# ---------------------------------------------------------------------------
+
+
+def _docker_compose_services() -> dict[str, str]:
+    try:
+        out = subprocess.check_output(
+            ["docker", "compose", "ps", "--format", "json"],
+            cwd=str(TABBY_DIR),
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        services: dict[str, str] = {}
+        for line in out.decode().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                name = entry.get("Service") or entry.get("Name", "?")
+                state = entry.get("State") or entry.get("Status", "?")
+                services[name] = state
+            except json.JSONDecodeError:
+                continue
+        return services
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Tabby provisioning helpers
+# ---------------------------------------------------------------------------
+
+
+def _decode_jwt_payload(token: str) -> dict[str, Any]:
+    try:
+        segment = token.split(".")[1]
+        segment += "=" * (4 - len(segment) % 4)
+        return json.loads(base64.urlsafe_b64decode(segment))
+    except Exception as exc:
+        raise RuntimeError(f"Could not decode JWT payload: {exc}") from exc
+
+
+def _secret_name(profile_id: str) -> str:
+    return f"tabby-noui-{profile_id.lower().replace('_', '-')}"
+
+
+def _env_prefix(secret_name: str) -> str:
+    return secret_name.upper().replace("-", "_")
+
+
+def _find_active_profile(profile_id: str, admin_token: str) -> dict[str, Any] | None:
+    try:
+        resp = _tabby_http("GET", "/admin/profiles?limit=200", token=admin_token)
+        profiles: list[dict[str, Any]] = (
+            resp.get("data", []) if isinstance(resp, dict) else list(resp)  # type: ignore[union-attr]
+        )
+        return next(
+            (p for p in profiles if p.get("profile_id") == profile_id and p.get("version_state") == "ACTIVE"),
+            None,
+        )
+    except RuntimeError:
+        return None
+
+
+def _prompt_profiles() -> list[str]:
+    print()
+    print(_bold("  First-time setup — enter your Tabby profile ID(s)"))
+    print()
+    print("  A profile ID is the identifier of a target-app credential set in Tabby.")
+    print("  Examples: salesforce-standard, google-workspace, servicenow-itsm")
+    print()
+    while True:
+        try:
+            raw = input("  Profile ID(s) (space-separated): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return []
+        profiles = [p.strip() for p in raw.split() if p.strip()]
+        if profiles:
+            return profiles
+        print(_yellow("  At least one profile ID is required. Try again."))
+
+
+def _load_cached_default_profiles() -> list[str]:
+    cached = _load_cache()
+    profiles = cached.get("default_profiles", [])
+    return profiles if isinstance(profiles, list) else []
+
+
+def _bypass_canary_gate(profile_db_id: str) -> bool:
+    sql = (
+        f"UPDATE service_profiles "
+        f"SET canary_request_count=5, canary_error_count=0 "
+        f"WHERE id='{profile_db_id}'"
+    )
+    try:
+        subprocess.run(
+            ["docker", "compose", "exec", "-T", "postgres", "psql",
+             "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+            cwd=str(TABBY_DIR),
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except Exception as exc:
+        print(_red(f"Canary bypass failed: {exc}"))
+        return False
+
+
+def _prompt_app_config(profile_id: str) -> dict[str, Any] | None:
+    print()
+    print(_bold(f"  Configure login for profile '{profile_id}'"))
+    print()
+    print("  Tabby needs to know how to log into your target app so it can")
+    print("  maintain a live browser session and serve fresh credentials.")
+    print()
+    try:
+        login_url = input("  Login page URL (e.g. https://app.example.com/login): ").strip()
+        if not login_url:
+            return None
+
+        print()
+        print("  Leave email and password blank if the app requires no login.")
+        username = input("  Test account email / username (optional): ").strip()
+        password = ""
+        if username:
+            password = getpass.getpass("  Test account password: ")
+
+        print()
+        print("  CSS selectors for the login form (Enter = use default):")
+        email_sel = (
+            input("  Email/username field  [input[name='email'], input[type='email']]: ").strip()
+            or "input[name='email'], input[type='email']"
+        )
+        pass_sel = (
+            input("  Password field        [input[type='password']]: ").strip()
+            or "input[type='password']"
+        )
+        submit_sel = (
+            input("  Submit button         [button[type='submit']]: ").strip()
+            or "button[type='submit']"
+        )
+        success_sel = input(
+            "  Post-login element    (e.g. #dashboard, .user-menu — optional): "
+        ).strip()
+
+        otp = input("\n  Does login require OTP / MFA? [y/N]: ").strip().lower() == "y"
+        otp_sel = ""
+        if otp:
+            otp_sel = (
+                input("  OTP input selector    [input[name='otp']]: ").strip()
+                or "input[name='otp']"
+            )
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+    return {
+        "login_url": login_url,
+        "username": username,
+        "password": password,
+        "email_sel": email_sel,
+        "pass_sel": pass_sel,
+        "submit_sel": submit_sel,
+        "success_sel": success_sel,
+        "otp_required": otp,
+        "otp_sel": otp_sel,
+    }
+
+
+def _build_app_payload(profile_id: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    parsed = urlparse(cfg["login_url"])
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    secret = _secret_name(profile_id)
+    requires_login = bool(cfg.get("username"))
+
+    steps: list[dict[str, Any]] = [{"action": "goto", "url": cfg["login_url"]}]
+    if requires_login:
+        steps += [
+            {"action": "fill", "selector": cfg["email_sel"], "value": "${USERNAME}"},
+            {"action": "fill", "selector": cfg["pass_sel"], "value": "${PASSWORD}", "sensitive": True},
+            {"action": "click", "selector": cfg["submit_sel"]},
+        ]
+        if cfg.get("otp_required") and cfg.get("otp_sel"):
+            steps += [
+                {"action": "wait_for", "selector": cfg["otp_sel"], "timeout_ms": 120000, "sensitive": True},
+                {"action": "click", "selector": "[type='submit']"},
+            ]
+    if cfg.get("success_sel"):
+        steps.append({"action": "wait_for", "selector": cfg["success_sel"], "timeout_ms": 30000})
+
+    credential_ref = f"k8s:secret/{secret}" if requires_login else "k8s:secret/no-auth"
+    login_config: dict[str, Any] = {
+        "login_url": cfg["login_url"],
+        "credential_ref": credential_ref,
+        "steps": steps,
+    }
+    if requires_login and cfg.get("otp_required") and cfg.get("otp_sel"):
+        login_config["otp_prompt"] = {"method": "chat", "field_selector": cfg["otp_sel"]}
+
+    return {
+        "name": profile_id,
+        "target_urls": [origin],
+        "login_config": login_config,
+        "keepalive_config": {
+            "interval_seconds": 300,
+            "actions": [],
+            "health_checks": [{"type": "url_check", "url": origin, "expect_status": 200}],
+            "policy": "all",
+        },
+        "export_policy": {
+            "artifact_types": ["cookies", "headers", "csrf_token"],
+            "encryption": {"algo": "AES-256-GCM", "key_version": "v1"},
+            "ttl_seconds": 3600,
+        },
+        "notification_config": {"channels": ["slack:#local-dev"]},
+        "desired_session_count": 0,
+        "browser_policy": {"streaming_mode": "cdp"},
+    }
+
+
+def _ensure_service_profile(
+    profile_id: str,
+    tenant_id: str,
+    admin_token: str,
+    cache: dict[str, Any],
+) -> bool:
+    existing = _find_active_profile(profile_id, admin_token)
+    if existing:
+        print(_green(f"  ✓ '{profile_id}' is already ACTIVE in Tabby"))
+        apps = cache.setdefault("apps", {})
+        entry = apps.setdefault(profile_id, {})
+        entry["app_id"] = existing.get("app_id", entry.get("app_id", ""))
+        entry["profile_db_id"] = existing.get("id", entry.get("profile_db_id", ""))
+        return True
+
+    print(_yellow(f"  '{profile_id}' is not ACTIVE — configuring now…"))
+    apps = cache.setdefault("apps", {})
+    entry = apps.setdefault(profile_id, {})
+    app_id: str = entry.get("app_id", "")
+
+    if not app_id:
+        cfg = _prompt_app_config(profile_id)
+        if not cfg:
+            print(_yellow(f"  Skipped '{profile_id}' — no config entered."))
+            return False
+
+        app_payload = _build_app_payload(profile_id, cfg)
+        print(f"  Creating Application '{profile_id}' …", end=" ", flush=True)
+        try:
+            app_resp = _tabby_http("POST", "/apps", app_payload, token=admin_token)
+            assert isinstance(app_resp, dict)
+            app_id = app_resp["app_id"]
+            print(_green("✓"))
+        except (RuntimeError, KeyError, AssertionError) as exc:
+            print()
+            print(_red(f"  App creation failed: {exc}"))
+            return False
+
+        entry.update({
+            "app_id": app_id,
+            "login_url": cfg["login_url"],
+            "username": cfg.get("username", ""),
+            "credential_ref": app_payload["login_config"]["credential_ref"],
+            "login_config": app_payload["login_config"],
+        })
+        if cfg.get("username") and cfg.get("password"):
+            secret = _secret_name(profile_id)
+            prefix = _env_prefix(secret)
+            _write_env_vars(ENV_LOCAL, {
+                f"{prefix}_USERNAME": cfg["username"],
+                f"{prefix}_PASSWORD": cfg["password"],
+            })
+
+    login_config = entry.get("login_config", {})
+
+    t = time.localtime()
+    version = f"{t.tm_year % 100}.{t.tm_mon}.{t.tm_mday}"
+    profile_payload: dict[str, Any] = {
+        "profile_id": profile_id,
+        "app_id": app_id,
+        "version": version,
+        "login_config": login_config,
+        "credential_types": {"cookies": [], "headers": []},
+        "target_domains": [urlparse(entry.get("login_url", "")).netloc or profile_id],
+    }
+    print(f"  Creating ServiceProfile '{profile_id}' …", end=" ", flush=True)
+    try:
+        prof_resp = _tabby_http("POST", "/admin/profiles", profile_payload, token=admin_token)
+        assert isinstance(prof_resp, dict)
+        profile_db_id: str = prof_resp["id"]
+        print(_green("✓"))
+    except (RuntimeError, KeyError, AssertionError) as exc:
+        print()
+        print(_red(f"  ServiceProfile creation failed: {exc}"))
+        return False
+
+    entry["profile_db_id"] = profile_db_id
+
+    print("  Promoting STAGING → CANARY …", end=" ", flush=True)
+    try:
+        _tabby_http("POST", f"/admin/profiles/{profile_db_id}/promote", token=admin_token)
+        print(_green("✓"))
+    except RuntimeError as exc:
+        print()
+        print(_red(f"  Promotion failed: {exc}"))
+        return False
+
+    print("  Bypassing canary gate …", end=" ", flush=True)
+    if not _bypass_canary_gate(profile_db_id):
+        return False
+    print(_green("✓"))
+
+    print("  Promoting CANARY → ACTIVE …", end=" ", flush=True)
+    try:
+        _tabby_http("POST", f"/admin/profiles/{profile_db_id}/promote", token=admin_token)
+        print(_green("✓"))
+    except RuntimeError as exc:
+        print()
+        print(_red(f"  Promotion to ACTIVE failed: {exc}"))
+        return False
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Tabby session helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_sessions(admin_token: str) -> list[dict[str, Any]]:
+    try:
+        resp = _tabby_http("GET", "/sessions?limit=200", token=admin_token)
+        if isinstance(resp, dict):
+            return resp.get("data", [])
+        return list(resp)  # type: ignore[arg-type]
+    except RuntimeError:
+        return []
+
+
+def _seed_session(app_id: str, tenant_id: str) -> str | None:
+    seed_script = TABBY_DIR / "scripts" / "batch-a-seed-session.js"
+    if not seed_script.exists():
+        print(_red(f"Seed script not found: {seed_script}"))
+        return None
+
+    env = {**os.environ}
+    env.update(_load_env_local())
+
+    print("  Seeding session record …", end=" ", flush=True)
+    try:
+        result = subprocess.run(
+            ["node", str(seed_script), app_id, tenant_id],
+            cwd=str(TABBY_DIR),
+            env=env,
+            capture_output=True,
+            timeout=15,
+        )
+        if result.returncode != 0:
+            print()
+            print(_red(f"Seed script failed: {result.stderr.decode(errors='replace')}"))
+            return None
+        data = json.loads(result.stdout.decode())
+        session_id: str = data["session"]["id"]
+        print(_green("✓"))
+        return session_id
+    except Exception as exc:
+        print()
+        print(_red(f"Seed script error: {exc}"))
+        return None
+
+
+# ---------------------------------------------------------------------------
+# tabby subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_tabby_status(args: argparse.Namespace) -> int:  # noqa: ARG001
+    print(_bold("Tabby infrastructure:"))
+    services = _docker_compose_services()
+    if services:
+        for name, state in services.items():
+            ok = "running" in state.lower()
+            icon = _green("✓") if ok else _red("✗")
+            print(f"  {icon}  {name}: {state}")
+    else:
+        print(_yellow("  (could not reach Docker Compose — is Docker running?)"))
+    print()
+    print(_bold("Tabby API:"))
+    if _tabby_alive():
+        pid = _read_pid(TABBY_PID_FILE)
+        pid_label = f" (PID {pid})" if pid else ""
+        print(_green(f"  ✓  API ready at {TABBY_API_HOST}{pid_label}"))
+        return 0
+    else:
+        print(_red(f"  ✗  API not reachable at {TABBY_API_HOST}"))
+        print(f"     Run: {_bold('noui tabby start')}")
+        return 1
+
+
+def cmd_tabby_start(args: argparse.Namespace) -> int:  # noqa: ARG001
+    if _tabby_alive():
+        pid = _read_pid(TABBY_PID_FILE)
+        pid_label = f" (PID {pid})" if pid else ""
+        print(_yellow(f"Tabby API is already running{pid_label} at {TABBY_API_HOST}"))
+        return 0
+
+    if not TABBY_DIR.exists():
+        print(_red(f"Tabby directory not found: {TABBY_DIR}"))
+        return 1
+
+    if not ENV_LOCAL.exists():
+        if ENV_EXAMPLE.exists():
+            import shutil
+            shutil.copy(ENV_EXAMPLE, ENV_LOCAL)
+            print(_yellow(f"Created {ENV_LOCAL} from template."))
+            print(_yellow("Edit it and set JWT_SIGNING_KEY, TENANT_ENCRYPTION_KEY,"))
+            print(_yellow("AGENT_SECRET_HMAC_KEY, ADMIN_BOOTSTRAP_EMAIL, ADMIN_BOOTSTRAP_PASSWORD."))
+            print()
+        else:
+            print(_red(f"No .env.local found at {ENV_LOCAL}"))
+            return 1
+
+    print("Starting Docker Compose infrastructure …", end="", flush=True)
+    try:
+        subprocess.run(
+            ["docker", "compose", "up", "-d"],
+            cwd=str(TABBY_DIR),
+            check=True,
+            capture_output=True,
+        )
+        print(_green(" ✓"))
+    except subprocess.CalledProcessError as exc:
+        print()
+        print(_red(f"docker compose up failed: {exc.stderr.decode(errors='replace')}"))
+        return 1
+    except FileNotFoundError:
+        print()
+        print(_red("'docker' command not found. Is Docker installed and in PATH?"))
+        return 1
+
+    env = {**os.environ}
+    env.update(_load_env_local())
+
+    TABBY_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = open(TABBY_LOG_FILE, "a")  # noqa: SIM115
+    proc = subprocess.Popen(
+        ["pnpm", "--filter", "@browser-hitl/api", "start:dev"],
+        cwd=str(TABBY_DIR),
+        env=env,
+        stdout=log_fh,
+        stderr=log_fh,
+        start_new_session=True,
+    )
+    TABBY_PID_FILE.write_text(str(proc.pid))
+    print(f"Starting Tabby API (PID {proc.pid}) … logs → {_cyan(str(TABBY_LOG_FILE))}", end="", flush=True)
+
+    for _ in range(60):
+        time.sleep(1)
+        print(".", end="", flush=True)
+        if _tabby_alive():
+            break
+    else:
+        print()
+        print(_red(f"API did not become ready within 60s. Check logs: {TABBY_LOG_FILE}"))
+        _clear_pid(TABBY_PID_FILE)
+        return 1
+
+    print()
+    print(_green(f"✓ Tabby API ready at {TABBY_API_HOST}"))
+    print()
+    print(f"  Next: {_bold('noui tabby setup')}")
+    return 0
+
+
+def cmd_tabby_stop(args: argparse.Namespace) -> int:
+    pid = _read_pid(TABBY_PID_FILE)
+    if pid is None:
+        if _tabby_alive():
+            print(_yellow("API is running but PID file not found — stop it manually."))
+            return 1
+        print(_yellow("Tabby API is not running."))
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            for _ in range(15):
+                time.sleep(0.5)
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+            _clear_pid(TABBY_PID_FILE)
+            print(_green(f"✓ API process (PID {pid}) stopped."))
+        except ProcessLookupError:
+            _clear_pid(TABBY_PID_FILE)
+            print(_yellow(f"Process {pid} was not running — cleared stale PID file."))
+        except Exception as exc:
+            print(_red(f"Failed to stop API: {exc}"))
+            return 1
+
+    if args.infra:
+        print("Stopping Docker Compose infrastructure …", end="", flush=True)
+        try:
+            subprocess.run(
+                ["docker", "compose", "stop"],
+                cwd=str(TABBY_DIR),
+                check=True,
+                capture_output=True,
+            )
+            print(_green(" ✓"))
+        except Exception as exc:
+            print()
+            print(_red(f"docker compose stop failed: {exc}"))
+            return 1
+    return 0
+
+
+def cmd_tabby_setup(args: argparse.Namespace) -> int:
+    """Full end-to-end Tabby provisioning for NoUI."""
+    if not _tabby_alive():
+        print("Tabby API is not running — starting it first …")
+        print()
+        rc = cmd_tabby_start(args)
+        if rc != 0:
+            return rc
+        print()
+
+    env_local = _load_env_local()
+    admin_email = env_local.get("ADMIN_BOOTSTRAP_EMAIL", "")
+    admin_password = env_local.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+    if not admin_email or not admin_password:
+        print(_red(f"ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be set in {ENV_LOCAL}"))
+        return 1
+
+    print(f"Logging in as {_cyan(admin_email)} …", end=" ", flush=True)
+    try:
+        login_resp = _tabby_http("POST", "/login", {"email": admin_email, "password": admin_password})
+        assert isinstance(login_resp, dict)
+        admin_token = login_resp.get("token") or login_resp.get("access_token", "")
+    except (RuntimeError, AssertionError) as exc:
+        print()
+        print(_red(f"Login failed: {exc}"))
+        return 1
+    if not admin_token:
+        print(_red(f"\nNo token in login response: {login_resp}"))
+        return 1
+    print(_green("✓"))
+
+    payload = _decode_jwt_payload(admin_token)
+    tenant_id = payload.get("tenant_id") or payload.get("tenantId") or payload.get("sub", "")
+    if not tenant_id:
+        print(_red(f"Could not find tenant_id in JWT: {payload}"))
+        return 1
+    print(f"Tenant ID: {_cyan(tenant_id)}")
+
+    cache = _load_cache()
+
+    if args.profiles:
+        allowed_profiles = list(args.profiles)
+        print(f"Profiles (from --profiles): {_cyan(', '.join(allowed_profiles))}")
+    else:
+        cached_defaults = _load_cached_default_profiles()
+        if cached_defaults and not args.force:
+            allowed_profiles = cached_defaults
+            print(f"Profiles (saved default): {_cyan(', '.join(allowed_profiles))}")
+        else:
+            allowed_profiles = _prompt_profiles()
+            if not allowed_profiles:
+                print(_red("No profiles provided — setup cancelled."))
+                return 1
+            print(f"Profiles: {_cyan(', '.join(allowed_profiles))}")
+
+    client_id: str = ""
+    client_secret: str = ""
+
+    if not args.force:
+        client_id = cache.get("client_id", "")
+        client_secret = cache.get("client_secret", "")
+        if client_id and client_secret:
+            print(f"Using cached agent client: {_cyan(client_id)}")
+            if args.profiles and cache.get("default_profiles") != allowed_profiles:
+                cache["default_profiles"] = allowed_profiles
+
+    if not (client_id and client_secret):
+        try:
+            existing_clients = _tabby_http("GET", f"/admin/agent-clients/{tenant_id}", token=admin_token)
+            if not isinstance(existing_clients, list):
+                existing_clients = []
+        except RuntimeError:
+            existing_clients = []
+
+        match = next((c for c in existing_clients if c.get("name") == TABBY_AGENT_CLIENT_NAME), None)
+
+        if match and not args.force:
+            print(f"Agent client '{TABBY_AGENT_CLIENT_NAME}' already exists — rotating secret …", end=" ", flush=True)
+            try:
+                rotated = _tabby_http(
+                    "POST",
+                    f"/admin/agent-clients/{match['id']}/rotate-secret",
+                    token=admin_token,
+                )
+                assert isinstance(rotated, dict)
+                client_id = rotated.get("client_id", match["client_id"])
+                client_secret = rotated.get("client_secret", "")
+                print(_green("✓"))
+            except (RuntimeError, AssertionError) as exc:
+                print()
+                print(_red(f"Secret rotation failed: {exc}"))
+                return 1
+        else:
+            action = "Force-recreating" if (match and args.force) else "Registering"
+            print(f"{action} agent client '{TABBY_AGENT_CLIENT_NAME}' …", end=" ", flush=True)
+            if match and args.force:
+                try:
+                    _tabby_http("DELETE", f"/admin/agent-clients/{match['id']}", token=admin_token)
+                except RuntimeError:
+                    pass
+            try:
+                created = _tabby_http(
+                    "POST",
+                    "/admin/agent-clients",
+                    {
+                        "name": TABBY_AGENT_CLIENT_NAME,
+                        "tenant_id": tenant_id,
+                        "allowed_profiles": allowed_profiles,
+                        "token_ttl_seconds": 3600,
+                    },
+                    token=admin_token,
+                )
+                assert isinstance(created, dict)
+                client_id = created["client_id"]
+                client_secret = created["client_secret"]
+                print(_green("✓"))
+            except (RuntimeError, KeyError, AssertionError) as exc:
+                print()
+                print(_red(f"Agent client creation failed: {exc}"))
+                return 1
+
+        if not client_secret:
+            print(_red("No client_secret in response — cannot proceed."))
+            return 1
+
+    cache.update({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "default_profiles": allowed_profiles,
+    })
+    _save_cache(cache)
+
+    print()
+    print(_bold("Provisioning ServiceProfiles:"))
+    for profile_id in allowed_profiles:
+        cache = _load_cache()
+        ok = _ensure_service_profile(profile_id, tenant_id, admin_token, cache)
+        _save_cache(cache)
+        if not ok:
+            print(_yellow(f"  Skipped '{profile_id}' — re-run setup to configure it."))
+
+    env_file = Path(args.env_file) if args.env_file else NOUI_DIR / ".env"
+    _write_env_vars(env_file, {
+        "TABBY_API_URL": TABBY_API_HOST,
+        "TABBY_CLIENT_ID": client_id,
+        "TABBY_CLIENT_SECRET": client_secret,
+    })
+
+    print()
+    print(_green("✓ Setup complete!"))
+    print()
+    print(f"  Credentials written to: {_cyan(str(env_file))}")
+    print(f"  Agent client:           {_cyan(client_id)}")
+    print()
+    print("  Next: ensure a browser session is running:")
+    print(f"    {_bold('noui tabby session ensure')}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# tabby session subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_session_status(args: argparse.Namespace) -> int:  # noqa: ARG001
+    if not _tabby_alive():
+        print(_red(f"Tabby API is not running. Run: {_bold('noui tabby start')}"))
+        return 1
+
+    admin_token = _get_admin_token()
+    if not admin_token:
+        return 1
+
+    sessions = _get_sessions(admin_token)
+    cache = _load_cache()
+    apps = cache.get("apps", {})
+    app_to_profile = {v.get("app_id"): k for k, v in apps.items()}
+
+    if not sessions:
+        print(_yellow("No sessions found."))
+        print(f"  Start one with: {_bold('noui tabby session ensure')}")
+        return 0
+
+    profile_filter: str | None = getattr(args, "profile", None)
+
+    print(_bold("Browser sessions:"))
+    shown = 0
+    for s in sessions:
+        app_id = s.get("app_id", "")
+        profile_name = app_to_profile.get(app_id, app_id[:8] + "…")
+        if profile_filter and profile_name != profile_filter:
+            continue
+        state = s.get("state", "?")
+        sid = s.get("id", "?")
+        if state == "HEALTHY":
+            icon = _green("●")
+        elif state in ("FAILED", "TERMINATED"):
+            icon = _red("●")
+        else:
+            icon = _yellow("●")
+        print(f"  {icon}  {_bold(profile_name)}: {state}  (id: {sid[:8]}…)")
+        shown += 1
+
+    if shown == 0:
+        print(_yellow(f"  No sessions for profile '{profile_filter}'."))
+    return 0
+
+
+def cmd_session_ensure(args: argparse.Namespace) -> int:
+    if not _tabby_alive():
+        print(_red(f"Tabby API is not running. Run: {_bold('noui tabby start')}"))
+        return 1
+
+    admin_token = _get_admin_token()
+    if not admin_token:
+        return 1
+
+    cache = _load_cache()
+    apps = cache.get("apps", {})
+
+    profile_id: str | None = getattr(args, "profile", None)
+    if not profile_id:
+        if len(apps) == 1:
+            profile_id = list(apps.keys())[0]
+        elif len(apps) > 1:
+            print(_red("Multiple profiles configured. Specify one with --profile:"))
+            for p in apps:
+                print(f"  {p}")
+            return 1
+        else:
+            defaults = cache.get("default_profiles", [])
+            profile_id = defaults[0] if len(defaults) == 1 else None
+        if not profile_id:
+            print(_red("Could not determine profile. Run 'noui tabby setup' first or pass --profile."))
+            return 1
+
+    entry = apps.get(profile_id)
+    if not entry:
+        print(_red(f"Profile '{profile_id}' not found in cache. Run: noui tabby setup"))
+        return 1
+
+    app_id: str = entry.get("app_id", "")
+    if not app_id:
+        print(_red(f"No app_id cached for '{profile_id}'. Re-run: noui tabby setup"))
+        return 1
+
+    try:
+        jwt_payload = _decode_jwt_payload(admin_token)
+        tenant_id = jwt_payload.get("tenant_id") or jwt_payload.get("tenantId", "")
+    except RuntimeError:
+        tenant_id = ""
+
+    sessions = _get_sessions(admin_token)
+    healthy = [s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"]
+    if healthy:
+        print(_green(f"✓ Session for '{profile_id}' is already HEALTHY"))
+        return 0
+
+    print(f"No HEALTHY session for '{_cyan(profile_id)}' — starting one …")
+
+    session_id = _seed_session(app_id, tenant_id)
+    if not session_id:
+        return 1
+    print(f"  Session ID: {_cyan(session_id)}")
+
+    env = {**os.environ}
+    env.update(_load_env_local())
+    env.update({
+        "SESSION_ID": session_id,
+        "APP_ID": app_id,
+        "TENANT_ID": tenant_id,
+        "STREAMING_MODE": "cdp",
+    })
+
+    creds_mount = Path("/tmp/tabby-local-secrets")
+    secret_name = entry.get("credential_ref", "k8s:secret/no-auth").replace("k8s:secret/", "")
+    secret_dir = creds_mount / secret_name
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    if entry.get("username"):
+        env_local_vars = _load_env_local()
+        prefix = _env_prefix(_secret_name(profile_id))
+        username = entry["username"]
+        password = env_local_vars.get(f"{prefix}_PASSWORD", "")
+        if not password:
+            print(_red(f"Password for '{profile_id}' not found in {ENV_LOCAL}."))
+            print("Re-run: noui tabby setup")
+            return 1
+        (secret_dir / "username").write_text(username)
+        (secret_dir / "password").write_text(password)
+    else:
+        (secret_dir / "username").write_text("no-auth")
+        (secret_dir / "password").write_text("no-auth")
+    env["CREDENTIALS_MOUNT_PATH"] = str(creds_mount)
+
+    old_pid = _read_pid(TABBY_WORKER_PID_FILE)
+    if old_pid:
+        try:
+            os.kill(old_pid, signal.SIGTERM)
+            for _ in range(10):
+                time.sleep(0.3)
+                try:
+                    os.kill(old_pid, 0)
+                except ProcessLookupError:
+                    break
+        except ProcessLookupError:
+            pass
+        _clear_pid(TABBY_WORKER_PID_FILE)
+    try:
+        subprocess.run(["fuser", "-k", "8091/tcp"], capture_output=True)
+        time.sleep(0.5)
+    except FileNotFoundError:
+        pass
+
+    TABBY_WORKER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    worker_log_fh = open(TABBY_WORKER_LOG_FILE, "a")  # noqa: SIM115
+    proc = subprocess.Popen(
+        ["pnpm", "--filter", "@browser-hitl/worker", "start"],
+        cwd=str(TABBY_DIR),
+        env=env,
+        stdout=worker_log_fh,
+        stderr=worker_log_fh,
+        start_new_session=True,
+    )
+    TABBY_WORKER_PID_FILE.write_text(str(proc.pid))
+    print(f"  Worker started (PID {proc.pid}) — logs → {_cyan(str(TABBY_WORKER_LOG_FILE))}")
+    print()
+    print("  Waiting for health check to pass", end="", flush=True)
+
+    final_state = ""
+    final_health = ""
+    for _ in range(60):
+        time.sleep(5)
+        print(".", end="", flush=True)
+        try:
+            resp = _tabby_http("GET", f"/sessions/{session_id}", token=admin_token)
+            assert isinstance(resp, dict)
+            final_state = resp.get("state", "")
+            final_health = resp.get("health_result_type", "")
+            if final_state == "HEALTHY" or final_health == "PASS":
+                break
+            if final_state in ("FAILED", "TERMINATED") or final_health == "AUTH_FAIL":
+                print()
+                print(_red(f"Session failed (state={final_state}, health={final_health})."))
+                print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+                return 1
+        except (RuntimeError, AssertionError):
+            pass
+    else:
+        print()
+        print(_red("Session did not pass health check within 5 minutes."))
+        print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+        return 1
+
+    print()
+
+    if final_state != "HEALTHY":
+        print("  Promoting session state to HEALTHY …", end=" ", flush=True)
+        sql = f"UPDATE sessions SET state='HEALTHY' WHERE id='{session_id}'"
+        try:
+            subprocess.run(
+                ["docker", "compose", "exec", "-T", "postgres", "psql",
+                 "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+                cwd=str(TABBY_DIR),
+                check=True,
+                capture_output=True,
+            )
+            print(_green("✓"))
+        except Exception as exc:
+            print()
+            print(_red(f"Failed to promote session state: {exc}"))
+            return 1
+
+    print(_green(f"✓ Session for '{profile_id}' is HEALTHY"))
+    print()
+    print("  You can now record a workflow with Tabby auth:")
+    print(f"    {_bold('noui workflow record \"My Workflow\" <url>')}")
+    return 0
+
+
+def cmd_session_stop(args: argparse.Namespace) -> int:  # noqa: ARG001
+    pid = _read_pid(TABBY_WORKER_PID_FILE)
+    if pid is None:
+        print(_yellow("No worker PID file found — worker may not be running."))
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(10):
+            time.sleep(0.5)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+        _clear_pid(TABBY_WORKER_PID_FILE)
+        print(_green(f"✓ Worker (PID {pid}) stopped."))
+        return 0
+    except ProcessLookupError:
+        _clear_pid(TABBY_WORKER_PID_FILE)
+        print(_yellow(f"Process {pid} was not running — cleared stale PID file."))
+        return 0
+    except Exception as exc:
+        print(_red(f"Failed to stop worker: {exc}"))
+        return 1
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1212,6 +2195,63 @@ def _build_parser() -> argparse.ArgumentParser:
     mcp_stop_p = mcp_sub.add_parser("stop", help="Stop a generated MCP server")
     mcp_stop_p.add_argument("server_id", help="MCP server ID")
 
+    # --- tabby ---
+    tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")
+    tabby_sub = tabby_parser.add_subparsers(dest="tabby_command")
+
+    tabby_sub.add_parser("status", help="Check Docker Compose services and Tabby API liveness")
+    tabby_sub.add_parser("start", help="Start Docker Compose infra and Tabby API in background")
+
+    tabby_stop_p = tabby_sub.add_parser("stop", help="Stop the Tabby API process")
+    tabby_stop_p.add_argument("--infra", action="store_true", help="Also stop Docker Compose services")
+
+    tabby_setup_p = tabby_sub.add_parser(
+        "setup",
+        help="Full provisioning: agent client + ServiceProfiles + write .env",
+    )
+    tabby_setup_p.add_argument(
+        "--profiles",
+        nargs="+",
+        metavar="PROFILE_ID",
+        default=None,
+        help="Tabby profile IDs to provision (prompted interactively if omitted)",
+    )
+    tabby_setup_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Revoke and recreate the agent client even if one exists",
+    )
+    tabby_setup_p.add_argument(
+        "--env-file",
+        metavar="PATH",
+        default=None,
+        help="Path to write TABBY_* vars into (default: noui/.env)",
+    )
+
+    tabby_session_p = tabby_sub.add_parser("session", help="Manage browser sessions")
+    tabby_session_sub = tabby_session_p.add_subparsers(dest="session_action")
+
+    tabby_session_sub.add_parser("status", help="Show session state for configured profiles")
+
+    ensure_p = tabby_session_sub.add_parser(
+        "ensure",
+        help="Ensure a HEALTHY session exists, starting the worker if needed",
+    )
+    ensure_p.add_argument(
+        "--profile",
+        metavar="PROFILE_ID",
+        default=None,
+        help="Profile to ensure (default: the only configured profile)",
+    )
+
+    stop_sess_p = tabby_session_sub.add_parser("stop", help="Stop the locally-running worker")
+    stop_sess_p.add_argument(
+        "--profile",
+        metavar="PROFILE_ID",
+        default=None,
+        help="Profile whose worker to stop",
+    )
+
     return parser
 
 
@@ -1277,6 +2317,42 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
     return fn(args)
 
 
+def _dispatch_tabby_session(args: argparse.Namespace) -> int:
+    action = getattr(args, "session_action", None)
+    if action is None:
+        print("Usage: noui tabby session {status,ensure,stop}")
+        return 1
+    dispatch = {
+        "status": cmd_session_status,
+        "ensure": cmd_session_ensure,
+        "stop": cmd_session_stop,
+    }
+    fn = dispatch.get(action)
+    if fn is None:
+        print(_red(f"Unknown session subcommand: {action}"))
+        return 1
+    return fn(args)
+
+
+def _dispatch_tabby(args: argparse.Namespace) -> int:
+    cmd = getattr(args, "tabby_command", None)
+    if cmd is None:
+        print("Usage: noui tabby {status,start,stop,setup,session}")
+        return 1
+    dispatch = {
+        "status": cmd_tabby_status,
+        "start": cmd_tabby_start,
+        "stop": cmd_tabby_stop,
+        "setup": cmd_tabby_setup,
+        "session": _dispatch_tabby_session,
+    }
+    fn = dispatch.get(cmd)
+    if fn is None:
+        print(_red(f"Unknown tabby subcommand: {cmd}"))
+        return 1
+    return fn(args)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1291,7 +2367,14 @@ def main() -> None:
         sys.exit(0)
 
     # Ensure defaults for optional flags used in dispatch
-    for attr, default in [("validate", False), ("profile", "")]:
+    for attr, default in [
+        ("validate", False),
+        ("profile", None),
+        ("infra", False),
+        ("force", False),
+        ("profiles", None),
+        ("env_file", None),
+    ]:
         if not hasattr(args, attr):
             setattr(args, attr, default)
 
@@ -1302,6 +2385,7 @@ def main() -> None:
         "login": _dispatch_login,
         "workflow": _dispatch_workflow,
         "mcp": _dispatch_mcp,
+        "tabby": _dispatch_tabby,
     }
 
     fn = dispatch.get(args.command)
