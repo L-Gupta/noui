@@ -70,28 +70,28 @@ changes)
 
 ### 🧩 HAR → API Compiler
 
--   Parses browser network traffic (HAR)\
--   Groups requests into logical workflows\
+-   Parses browser network traffic (HAR)
+-   Groups requests into logical workflows
 -   Generates clean Python functions
 
 ### 🐾 Tabby Runtime
 
--   Keeps browser sessions alive in the cloud\
--   Handles cookies, headers, auth\
+-   Keeps browser sessions alive in the cloud
+-   Handles cookies, headers, auth
 -   Streams VNC for login / 2FA when needed
 
 ### 🔌 MCP Server
 
--   Exposes generated APIs as tools\
+-   Exposes generated APIs as tools
 -   Works with Claude, ChatGPT, and MCP-compatible agents
 
 ------------------------------------------------------------------------
 
 ## 🎯 What you can do
 
--   Automate websites with no public APIs\
--   Turn internal tools into agent-ready SDKs\
--   Replace brittle browser automation workflows\
+-   Automate websites with no public APIs
+-   Turn internal tools into agent-ready SDKs
+-   Replace brittle browser automation workflows
 -   Build production-grade agents that actually scale
 
 ------------------------------------------------------------------------
@@ -121,9 +121,9 @@ NoUI executes it directly.
 
 ## 🔐 Authentication Flow
 
-1.  NoUI spins up a remote browser session\
-2.  Streams it via VNC\
-3.  You complete login / 2FA once\
+1.  NoUI spins up a remote browser session
+2.  Streams it via VNC
+3.  You complete login / 2FA once
 4.  Tabby maintains the session
 
 Agents reuse the authenticated context automatically.
@@ -143,7 +143,7 @@ Agents reuse the authenticated context automatically.
 
 ## 🧠 Philosophy
 
-> Websites already expose APIs.\
+> Websites already expose APIs.
 > The UI is just a layer on top.
 
 NoUI removes that layer.
@@ -163,7 +163,7 @@ uvicorn main:app --reload
 
 ## 🔥 Status
 
-Early open source --- expect rough edges.\
+Early open source --- expect rough edges.
 Contributions welcome.
 
 ------------------------------------------------------------------------
