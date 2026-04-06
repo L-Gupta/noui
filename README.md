@@ -172,8 +172,8 @@ NoUI removes that layer.
 
 # 1. Create a venv and install dependencies
 python3 -m venv .venv
-.venv/bin/python3.12 -m pip install poetry
-.venv/bin/python3.12 -m poetry install --no-root
+.venv/bin/python -m pip install poetry
+.venv/bin/python -m poetry install --no-root
 
 # 2. Configure environment
 cp .env.example .env
@@ -184,7 +184,7 @@ cp .env.example .env
 # Chrome → chrome://extensions → Developer mode → Load unpacked → select noui/extension/
 
 # 4. Start the backend
-.venv/bin/python3.12 cli/main.py start
+.venv/bin/python cli/main.py start
 # Backend runs at http://localhost:8002
 # Interactive API docs at http://localhost:8002/docs
 ```
@@ -217,40 +217,40 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 
 ```bash
 # 1. Create a workflow session
-.venv/bin/python3.12 cli/main.py workflow record "Fetch Results" "https://example.com"
+.venv/bin/python cli/main.py workflow record "Fetch Results" "https://example.com"
 
 # 2. Record in Chrome (extension → Workflow Recording mode → perform workflow → Complete)
 
 # 3. Export as FastMCP server
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id>
+.venv/bin/python cli/main.py workflow export-mcp <session_id>
 
 # 4. Start the MCP server
-.venv/bin/python3.12 cli/main.py mcp start <server_id>
+.venv/bin/python cli/main.py mcp start <server_id>
 ```
 
 ### Authenticated apps (with Tabby)
 
 ```bash
 # 0. Provision Tabby (first time only)
-.venv/bin/python3.12 cli/main.py tabby start
-.venv/bin/python3.12 cli/main.py tabby setup   # interactive
+.venv/bin/python cli/main.py tabby start
+.venv/bin/python cli/main.py tabby setup   # interactive
 
 # 1. Record login and register with Tabby
-.venv/bin/python3.12 cli/main.py login record "HubSpot" "https://app.hubspot.com/login"
+.venv/bin/python cli/main.py login record "HubSpot" "https://app.hubspot.com/login"
 # (record in Chrome using Login Recording mode)
-.venv/bin/python3.12 cli/main.py login import <session_id> --validate
+.venv/bin/python cli/main.py login import <session_id> --validate
 # → prints tabby_profile_id
 
 # 2. Ensure a live browser session
-.venv/bin/python3.12 cli/main.py tabby session ensure
+.venv/bin/python cli/main.py tabby session ensure
 
 # 3. Record and export the workflow
-.venv/bin/python3.12 cli/main.py workflow record "Create Contact" "https://app.hubspot.com"
+.venv/bin/python cli/main.py workflow record "Create Contact" "https://app.hubspot.com"
 # (record in Chrome using Workflow Recording mode)
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --profile <tabby_profile_id>
+.venv/bin/python cli/main.py workflow export-mcp <session_id> --profile <tabby_profile_id>
 
 # 4. Start the MCP server
-.venv/bin/python3.12 cli/main.py mcp start <server_id>
+.venv/bin/python cli/main.py mcp start <server_id>
 ```
 
 ------------------------------------------------------------------------
