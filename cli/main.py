@@ -932,7 +932,8 @@ def cmd_mcp_list(args: argparse.Namespace) -> int:  # noqa: ARG001
             continue
 
         server_id = manifest.get("server_id", "?")
-        app = manifest.get("app_name", manifest.get("app", "?"))
+        _app = manifest.get("app", {})
+        app = _app.get("name", "?") if isinstance(_app, dict) else str(_app)
         tools = manifest.get("tools", [])
         tool_count = len(tools) if isinstance(tools, list) else manifest.get("tool_count", 0)
 
@@ -966,7 +967,8 @@ def cmd_mcp_status(args: argparse.Namespace) -> int:
         print(_red(f"Failed to parse manifest: {exc}"))
         return 1
 
-    app = manifest.get("app_name", manifest.get("app", "?"))
+    _app = manifest.get("app", {})
+    app = _app.get("name", "?") if isinstance(_app, dict) else str(_app)
     tools = manifest.get("tools", [])
     tool_count = len(tools) if isinstance(tools, list) else manifest.get("tool_count", 0)
 

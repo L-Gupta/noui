@@ -46,6 +46,25 @@ cp .env.example .env
 
 ## Developer Flow
 
+### 0. Install the NoUI skills
+
+Install the NoUI skills into your project so Claude Code can guide you through the full workflow:
+
+```bash
+npx skills add <github-owner>/noui
+```
+
+Then run `/setup` in Claude Code to configure the environment. The available skills are:
+
+| Skill | Purpose |
+|---|---|
+| `/setup` | One-time setup: venv, deps, `.env`, Chrome extension |
+| `/record-login` | Record a login flow and register it with Tabby (authenticated apps) |
+| `/record-workflow` | Record a workflow and export it as a FastMCP server |
+| `/mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
+
+---
+
 ### 1. Start the backend
 
 ```bash
