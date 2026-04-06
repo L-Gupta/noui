@@ -1,15 +1,15 @@
 ---
-name: record-workflow
+name: noui-record-workflow
 description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export-mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers both authenticated (with tabby_profile_id) and unauthenticated (public API) sub-paths.
 ---
 
 # NoUI Record Workflow
 
-Record a browser workflow and compile it into a runnable FastMCP server. Works for both authenticated apps (requires a `tabby_profile_id` from `/record-login`) and public apps with no auth.
+Record a browser workflow and compile it into a runnable FastMCP server. Works for both authenticated apps (requires a `tabby_profile_id` from `/noui-record-login`) and public apps with no auth.
 
 All commands run from the `noui/` directory using `.venv/bin/python3.12 cli/main.py`.
 
-**Prerequisite:** `/setup` must be complete. For authenticated apps, `/record-login` must also be complete and you must have the `tabby_profile_id`.
+**Prerequisite:** `/noui-setup` must be complete. For authenticated apps, `/noui-record-login` must also be complete and you must have the `tabby_profile_id`.
 
 ---
 
@@ -19,7 +19,7 @@ All commands run from the `noui/` directory using `.venv/bin/python3.12 cli/main
 
 | App requires login? | Path |
 |---|---|
-| Yes — have `tabby_profile_id` from `/record-login` | **Path A** — authenticated |
+| Yes — have `tabby_profile_id` from `/noui-record-login` | **Path A** — authenticated |
 | No — public API, no credentials needed | **Path B** — unauthenticated |
 
 The steps are identical except that Path A passes `--profile <tabby_profile_id>` to `workflow export-mcp`.
@@ -48,7 +48,7 @@ Spawns a detached FastAPI server at `http://localhost:8002`. Verify with:
 .venv/bin/python3.12 cli/main.py status
 ```
 
-**If startup fails:** See the troubleshooting table in `/setup`.
+**If startup fails:** See the troubleshooting table in `/noui-setup`.
 
 ---
 
@@ -124,7 +124,7 @@ MCP server generated:
   Output     : mcp_servers/<app_slug>/<server_id>/
 ```
 
-**Note the `server_id`** — pass it to `/mcp` to start and connect the server.
+**Note the `server_id`** — pass it to `/noui-mcp` to start and connect the server.
 
 ---
 

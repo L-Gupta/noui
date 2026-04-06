@@ -54,14 +54,14 @@ Install the NoUI skills into your project so Claude Code can guide you through t
 npx skills add <github-owner>/noui
 ```
 
-Then run `/setup` in Claude Code to configure the environment. The available skills are:
+Then run `/noui-setup` in Claude Code to configure the environment. The available skills are:
 
 | Skill | Purpose |
 |---|---|
-| `/setup` | One-time setup: venv, deps, `.env`, Chrome extension |
-| `/record-login` | Record a login flow and register it with Tabby (authenticated apps) |
-| `/record-workflow` | Record a workflow and export it as a FastMCP server |
-| `/mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
+| `/noui-setup` | One-time setup: venv, deps, `.env`, Chrome extension |
+| `/noui-record-login` | Record a login flow and register it with Tabby (authenticated apps) |
+| `/noui-record-workflow` | Record a workflow and export it as a FastMCP server |
+| `/noui-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
 
 ---
 

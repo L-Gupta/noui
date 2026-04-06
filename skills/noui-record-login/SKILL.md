@@ -1,5 +1,5 @@
 ---
-name: record-login
+name: noui-record-login
 description: Use this skill when the user wants to record a login flow for an authenticated app and register it with Tabby to get a tabby_profile_id. Triggers on "record a login", "capture a login flow", "register with Tabby", "set up authentication for NoUI", "create a tabby_profile_id", "noui login record", "login recording mode", or "I need auth for my workflow".
 ---
 
@@ -9,7 +9,7 @@ Record a login flow for an authenticated app and register it with Tabby to produ
 
 All commands run from the `noui/` directory using `.venv/bin/python3.12 cli/main.py`.
 
-**Prerequisite:** `/setup` must be complete — venv installed, `.env` configured with `ANTHROPIC_API_KEY`, `TABBY_API_HOST`, and `TABBY_ADMIN_TOKEN`, Chrome extension loaded.
+**Prerequisite:** `/noui-setup` must be complete — venv installed, `.env` configured with `ANTHROPIC_API_KEY`, `TABBY_API_HOST`, and `TABBY_ADMIN_TOKEN`, Chrome extension loaded.
 
 ---
 
@@ -20,7 +20,7 @@ All commands run from the `noui/` directory using `.venv/bin/python3.12 cli/main
 - **ALWAYS** run `login review` after export and before register — never skip it even for clean-looking recordings
 - **NEVER** run `login register` if the review output shows `Generator valid: No` or any generator errors
 - **NEVER** use the `tabby_profile_id` in a workflow export until `login validate` succeeds with a HEALTHY state
-- **ALWAYS** note the `tabby_profile_id` printed by `login register` — it is needed for `/record-workflow`
+- **ALWAYS** note the `tabby_profile_id` printed by `login register` — it is needed for `/noui-record-workflow`
 
 ---
 
@@ -164,7 +164,7 @@ On completion you have:
 - `login_recordings/noui-<session_id8>-bundle.json`
 - `tabby_profile_id` — printed by `login register`
 
-Pass the `tabby_profile_id` to `/record-workflow` via `--profile`.
+Pass the `tabby_profile_id` to `/noui-record-workflow` via `--profile`.
 
 ---
 

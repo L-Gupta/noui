@@ -26,7 +26,7 @@ Skills cover the end-to-end NoUI cycle. Each phase hands off to the next.
 
 ### Phase 1 — Setup
 
-#### `/setup`
+#### `/noui-setup`
 
 One-time environment setup: create the venv, install dependencies via `poetry install --no-root`, configure `.env`, and load the Chrome extension.
 
@@ -42,7 +42,7 @@ python3 -m venv .venv
 
 ### Phase 2 — Login Recording (authenticated apps only)
 
-#### `/record-login`
+#### `/noui-record-login`
 
 Record a login flow for an app that requires authentication and register it with Tabby to produce a `tabby_profile_id`.
 
@@ -61,7 +61,7 @@ Output: `tabby_profile_id` → used in `/record-workflow --profile`
 
 ### Phase 3 — Workflow Recording
 
-#### `/record-workflow`
+#### `/noui-record-workflow`
 
 Record a browser workflow and compile it into a runnable FastMCP server. Supports both authenticated and unauthenticated paths.
 
@@ -75,13 +75,13 @@ Path B (unauthenticated / public API):
   → workflow export-mcp <session_id>
 ```
 
-Output: `server_id` → used in `/mcp`
+Output: `server_id` → used in `/noui-mcp`
 
 ---
 
 ### Phase 4 — MCP Server Management
 
-#### `/mcp`
+#### `/noui-mcp`
 
 Start, stop, list, and connect generated FastMCP servers to Claude Code.
 

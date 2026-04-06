@@ -1,5 +1,5 @@
 ---
-name: setup
+name: noui-setup
 description: Use this skill when the user wants to set up the NoUI project for the first time, install dependencies, configure the environment, load the Chrome extension, or prepare to run any NoUI skill. Triggers on "set up NoUI", "install NoUI", "configure noui", "load the Chrome extension", "first time setup", "get NoUI running", or "I want to start using NoUI".
 ---
 
