@@ -1,0 +1,144 @@
+[
+  {
+    "name": "search_airports_cities",
+    "description": "Search for airports and cities by name. Returns matching locations with their Google entity IDs (e.g. '/m/022pfm' for São Paulo) needed by the flight search tools.",
+    "method": "POST",
+    "path": "/_/FlightsFrontendUi/data/batchexecute",
+    "base_url": "https://www.google.com",
+    "request_content_type": "application/x-www-form-urlencoded",
+    "response_status": 200,
+    "params": [
+      {
+        "name": "query",
+        "description": "City or airport name to search (e.g. 'Sao Paulo', 'Rio de Janeiro')",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "csrf_token",
+        "description": "Optional: 'at' anti-CSRF token from an active Google session",
+        "type": "string",
+        "required": false,
+        "source": "body"
+      }
+    ],
+    "auth_source": "tabby",
+    "auth_cookies": [
+      "SIDCC",
+      "__Secure-1PSIDCC",
+      "__Secure-3PSIDCC"
+    ]
+  },
+  {
+    "name": "get_flight_prices_calendar",
+    "description": "Return a price calendar for a round-trip route across a date range. Use origin/destination entity IDs from search_airports_cities. Useful for finding the cheapest dates before calling search_flights.",
+    "method": "POST",
+    "path": "/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetCalendarPicker",
+    "base_url": "https://www.google.com",
+    "request_content_type": "application/x-www-form-urlencoded",
+    "response_status": 200,
+    "params": [
+      {
+        "name": "origin_entity_id",
+        "description": "Google entity ID for the origin city/airport (e.g. '/m/022pfm' for São Paulo)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "destination_entity_id",
+        "description": "Google entity ID for the destination city/airport (e.g. '/m/06gmr' for Rio de Janeiro)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "calendar_start",
+        "description": "Start of the date range to show prices for (YYYY-MM-DD)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "calendar_end",
+        "description": "End of the date range to show prices for (YYYY-MM-DD)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "csrf_token",
+        "description": "Optional: 'at' anti-CSRF token from an active Google session",
+        "type": "string",
+        "required": false,
+        "source": "body"
+      }
+    ],
+    "auth_source": "tabby",
+    "auth_cookies": [
+      "SIDCC",
+      "__Secure-1PSIDCC",
+      "__Secure-3PSIDCC"
+    ]
+  },
+  {
+    "name": "search_flights",
+    "description": "Search for available flights. Returns options with prices, airlines, and schedules for the given route and dates. Use origin/destination entity IDs from search_airports_cities. Leave return_date empty for one-way.",
+    "method": "POST",
+    "path": "/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults",
+    "base_url": "https://www.google.com",
+    "request_content_type": "application/x-www-form-urlencoded",
+    "response_status": 200,
+    "params": [
+      {
+        "name": "origin_entity_id",
+        "description": "Google entity ID for the origin city/airport (e.g. '/m/022pfm' for São Paulo)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "destination_entity_id",
+        "description": "Google entity ID for the destination city/airport (e.g. '/m/06gmr' for Rio de Janeiro)",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "departure_date",
+        "description": "Departure date in YYYY-MM-DD format",
+        "type": "string",
+        "required": true,
+        "source": "body"
+      },
+      {
+        "name": "return_date",
+        "description": "Return date in YYYY-MM-DD format. Leave empty for a one-way search.",
+        "type": "string",
+        "required": false,
+        "source": "body"
+      },
+      {
+        "name": "adults",
+        "description": "Number of adult passengers (default: 1)",
+        "type": "integer",
+        "required": false,
+        "source": "body"
+      },
+      {
+        "name": "csrf_token",
+        "description": "Optional: 'at' anti-CSRF token from an active Google session",
+        "type": "string",
+        "required": false,
+        "source": "body"
+      }
+    ],
+    "auth_source": "tabby",
+    "auth_cookies": [
+      "SIDCC",
+      "__Secure-1PSIDCC",
+      "__Secure-3PSIDCC"
+    ]
+  }
+]
