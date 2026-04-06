@@ -132,12 +132,12 @@ Agents reuse the authenticated context automatically.
 
 ## ⚔️ NoUI vs Computer-Use Agents
 
-                Computer-Use Agents    NoUI
-  ------------- ---------------------- --------------------
-  Speed         Slow (UI loops)        Fast (direct APIs)
-  Cost          High                   Low
-  Reliability   Breaks on UI changes   Stable
-  Approach      Simulates humans       Executes software
+|               | Computer-Use Agents  | NoUI               |
+|---------------|----------------------|--------------------|
+| Speed         | Slow (UI loops)      | Fast (direct APIs) |
+| Cost          | High                 | Low                |
+| Reliability   | Breaks on UI changes | More Stable        |
+| Approach      | Simulates humans     | Executes software  |
 
 ------------------------------------------------------------------------
 
