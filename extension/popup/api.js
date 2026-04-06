@@ -184,7 +184,7 @@ export const exportProject = (id) => api("GET", `/projects/${id}/export`);
 export const importProject = (bundle) => api("POST", "/projects/import", bundle);
 
 // Health check
-export const ping = () => api("POST", "/sessions/ping", { message: "hello" });
+export const ping = () => api("GET", "/health");
 
 // ── Chat with Claude (SSE streaming) ──────────────────────────────────────
 
