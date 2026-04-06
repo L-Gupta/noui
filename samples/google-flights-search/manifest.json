@@ -1,0 +1,63 @@
+{
+  "schema_version": "1",
+  "server_id": "google-flights-search-3a75ab0e",
+  "app": {
+    "name": "Google Flights Search",
+    "slug": "google-flights-search"
+  },
+  "workflow": {
+    "id": "google-flights-search-3a75ab0e",
+    "name": "Google Flights Search",
+    "workflow_session_id": "3a75ab0e-8bad-43bd-a78c-f5b7d07a8b72"
+  },
+  "auth": {
+    "tabby_profile_id": null,
+    "requires_auth": false
+  },
+  "runtime": {
+    "type": "fastmcp",
+    "entrypoint": "server.py",
+    "transport": "stdio",
+    "direct_execution": true
+  },
+  "tools": [
+    {
+      "name": "create_data_batchexecute",
+      "description": "Create   FlightsFrontendUi data batchexecute (Google Flights Search)",
+      "method": "POST",
+      "path": "/_/FlightsFrontendUi/data/batchexecute",
+      "module": "operations/create_data_batchexecute.py"
+    },
+    {
+      "name": "create_travel_frontend_flights_flightsfrontendservice_getcalendarpicker",
+      "description": "Create   FlightsFrontendUi data travel.frontend.flights.FlightsFrontendService GetCalendarPicker (Google Flights Search)",
+      "method": "POST",
+      "path": "/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetCalendarPicker",
+      "module": "operations/create_travel_frontend_flights_flightsfrontendservice_getcalendarpicker.py"
+    },
+    {
+      "name": "create_travel_frontend_flights_flightsfrontendservice_getshoppingresults",
+      "description": "Create   FlightsFrontendUi data travel.frontend.flights.FlightsFrontendService GetShoppingResults (Google Flights Search)",
+      "method": "POST",
+      "path": "/_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/GetShoppingResults",
+      "module": "operations/create_travel_frontend_flights_flightsfrontendservice_getshoppingresults.py"
+    }
+  ],
+  "artifacts": {
+    "server_file": "server.py",
+    "tools_file": "tools.json",
+    "files": [
+      "server.py",
+      "tools.json",
+      "noui_runtime/auth.py",
+      "operations/create_data_batchexecute.py",
+      "operations/create_travel_frontend_flights_flightsfrontendservice_getcalendarpicker.py",
+      "operations/create_travel_frontend_flights_flightsfrontendservice_getshoppingresults.py"
+    ]
+  },
+  "generation": {
+    "generated_at": "2026-04-06T17:16:52Z",
+    "generator": "noui",
+    "generator_version": "v1"
+  }
+}
