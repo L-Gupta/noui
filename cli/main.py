@@ -24,6 +24,7 @@ Subcommands:
     mcp status <server_id>             - Show status of a generated MCP server
     mcp start <server_id>              - Start a generated MCP server
     mcp stop <server_id>               - Stop a generated MCP server
+    mcp install <server_id> <agent>    - Install MCP server into agent config (claude-desktop, claude-code, codex, opencode)
 
     tabby status                       - Check Docker Compose services and Tabby API liveness
     tabby start                        - Start Docker Compose infra and Tabby API
@@ -1136,6 +1137,193 @@ def cmd_mcp_stop(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# MCP install helpers
+# ---------------------------------------------------------------------------
+
+
+def _install_claude_desktop(
+    server_id: str,
+    server_dir: Path,
+    python_cmd: str,
+    server_script: Path,
+    force: bool,
+) -> int:
+    config_path = Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+    config: dict = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except Exception as exc:
+            print(_red(f"Failed to parse {config_path}: {exc}"))
+            return 1
+
+    mcp_servers = config.setdefault("mcpServers", {})
+
+    if server_id in mcp_servers and not force:
+        print(_yellow(f"'{server_id}' is already configured in Claude Desktop. Use --force to overwrite."))
+        return 0
+
+    mcp_servers[server_id] = {
+        "command": python_cmd,
+        "args": [str(server_script)],
+        "cwd": str(server_dir),
+    }
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    print(_green(f"Installed '{server_id}' into Claude Desktop ({config_path})"))
+    print("  Restart Claude Desktop for changes to take effect.")
+    return 0
+
+
+def _install_claude_code(
+    server_id: str,
+    server_dir: Path,
+    python_cmd: str,
+    server_script: Path,
+    force: bool,
+) -> int:
+    config_path = Path.home() / ".claude.json"
+    config: dict = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except Exception as exc:
+            print(_red(f"Failed to parse {config_path}: {exc}"))
+            return 1
+
+    mcp_servers = config.setdefault("mcpServers", {})
+
+    if server_id in mcp_servers and not force:
+        print(_yellow(f"'{server_id}' is already configured in Claude Code. Use --force to overwrite."))
+        return 0
+
+    mcp_servers[server_id] = {
+        "type": "stdio",
+        "command": python_cmd,
+        "args": [str(server_script)],
+        "cwd": str(server_dir),
+    }
+
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    print(_green(f"Installed '{server_id}' into Claude Code ({config_path})"))
+    print("  Restart Claude Code (or run /mcp) for changes to take effect.")
+    return 0
+
+
+def _install_codex(
+    server_id: str,
+    server_dir: Path,  # noqa: ARG001
+    python_cmd: str,
+    server_script: Path,
+    force: bool,
+) -> int:
+    import re
+
+    config_path = Path.home() / ".codex" / "config.toml"
+    text = config_path.read_text() if config_path.exists() else ""
+
+    section_header = f"[mcp_servers.{server_id}]"
+    already_exists = section_header in text
+
+    if already_exists and not force:
+        print(_yellow(f"'{server_id}' is already configured in Codex CLI. Use --force to overwrite."))
+        return 0
+
+    new_block = (
+        f"\n[mcp_servers.{server_id}]\n"
+        f'command = "{python_cmd}"\n'
+        f'args = ["{server_script}"]\n'
+    )
+
+    if already_exists and force:
+        # Remove the existing section (from header to the next section or EOF)
+        pattern = re.compile(
+            r"\n\[mcp_servers\." + re.escape(server_id) + r"\][^\[]*",
+            re.DOTALL,
+        )
+        text = pattern.sub("", text)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(text.rstrip("\n") + new_block)
+    print(_green(f"Installed '{server_id}' into Codex CLI ({config_path})"))
+    print("  Restart Codex for changes to take effect.")
+    return 0
+
+
+def _install_opencode(
+    server_id: str,
+    server_dir: Path,  # noqa: ARG001
+    python_cmd: str,
+    server_script: Path,
+    force: bool,
+) -> int:
+    config_path = Path.home() / ".config" / "opencode" / "opencode.json"
+    config: dict = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except Exception as exc:
+            print(_red(f"Failed to parse {config_path}: {exc}"))
+            return 1
+
+    mcp_servers = config.setdefault("mcp", {})
+
+    if server_id in mcp_servers and not force:
+        print(_yellow(f"'{server_id}' is already configured in OpenCode. Use --force to overwrite."))
+        return 0
+
+    mcp_servers[server_id] = {
+        "type": "local",
+        "command": [python_cmd, str(server_script)],
+    }
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+    print(_green(f"Installed '{server_id}' into OpenCode ({config_path})"))
+    print("  Restart OpenCode for changes to take effect.")
+    return 0
+
+
+def cmd_mcp_install(args: argparse.Namespace) -> int:
+    """Install a generated MCP server into an agent's config."""
+    server_id: str = args.server_id
+    agent: str = args.agent
+    force: bool = getattr(args, "force", False)
+
+    manifest_path = _find_mcp_manifest(server_id)
+    if manifest_path is None:
+        print(_red(f"MCP server '{server_id}' not found in {MCP_SERVERS_DIR}"))
+        return 1
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to parse manifest: {exc}"))
+        return 1
+
+    server_dir = manifest_path.parent
+    runtime = manifest.get("runtime", {})
+    entrypoint = (runtime.get("entrypoint") if isinstance(runtime, dict) else None) or "server.py"
+    server_script = server_dir / entrypoint
+
+    if not server_script.exists():
+        print(_red(f"Server entrypoint not found: {server_script}"))
+        return 1
+
+    venv_python = NOUI_DIR / ".venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    installers = {
+        "claude-desktop": _install_claude_desktop,
+        "claude-code": _install_claude_code,
+        "codex": _install_codex,
+        "opencode": _install_opencode,
+    }
+    return installers[agent](server_id, server_dir, python_cmd, server_script, force)
+
+
+# ---------------------------------------------------------------------------
 # Tabby cache helpers
 # ---------------------------------------------------------------------------
 
@@ -2195,6 +2383,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mcp_stop_p = mcp_sub.add_parser("stop", help="Stop a generated MCP server")
     mcp_stop_p.add_argument("server_id", help="MCP server ID")
 
+    mcp_install_p = mcp_sub.add_parser("install", help="Install MCP server into an agent config")
+    mcp_install_p.add_argument("server_id", help="MCP server ID")
+    mcp_install_p.add_argument(
+        "agent",
+        choices=["claude-desktop", "claude-code", "codex", "opencode"],
+        help="Target agent",
+    )
+    mcp_install_p.add_argument("--force", action="store_true", help="Overwrite existing configuration")
+
     # --- tabby ---
     tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")
     tabby_sub = tabby_parser.add_subparsers(dest="tabby_command")
@@ -2302,13 +2499,14 @@ def _dispatch_workflow(args: argparse.Namespace) -> int:
 def _dispatch_mcp(args: argparse.Namespace) -> int:
     cmd = getattr(args, "mcp_command", None)
     if cmd is None:
-        print("Usage: noui mcp {list,status,start,stop}")
+        print("Usage: noui mcp {list,status,start,stop,install}")
         return 1
     dispatch = {
         "list": cmd_mcp_list,
         "status": cmd_mcp_status,
         "start": cmd_mcp_start,
         "stop": cmd_mcp_stop,
+        "install": cmd_mcp_install,
     }
     fn = dispatch.get(cmd)
     if fn is None:
