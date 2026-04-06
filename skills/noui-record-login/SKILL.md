@@ -1,0 +1,287 @@
+---
+name: noui-record-login
+description: Use this skill when the user wants to record a login flow for an authenticated app and register it with Tabby to get a tabby_profile_id. Triggers on "record a login", "capture a login flow", "register with Tabby", "set up authentication for NoUI", "create a tabby_profile_id", "noui login record", "login recording mode", or "I need auth for my workflow".
+---
+
+# NoUI Record Login
+
+Record a login flow for an authenticated app and register it with Tabby to produce a `tabby_profile_id`. That ID is required when exporting a workflow as a FastMCP server for an app that needs authentication.
+
+All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`.
+
+**Prerequisite:** `/noui-setup` must be complete — venv installed, `.env` configured with `ANTHROPIC_API_KEY`, `TABBY_API_HOST`, and `TABBY_ADMIN_TOKEN`, Chrome extension loaded.
+
+---
+
+## Critical Rules (Never Violate)
+
+- **ALWAYS** start the backend before asking the user to record
+- **ALWAYS** use **Login Recording Mode** in the extension — not the standard Workflow Recording button
+- **ALWAYS** run `login review` after export and before register — never skip it even for clean-looking recordings
+- **NEVER** run `login register` if the review output shows `Generator valid: No` or any generator errors
+- **NEVER** use the `tabby_profile_id` in a workflow export until `login validate` succeeds with a HEALTHY state
+- **ALWAYS** note the `tabby_profile_id` printed by `login register` — it is needed for `/noui-record-workflow`
+
+---
+
+## Step 1 — Start the Backend
+
+```bash
+.venv/bin/python cli/main.py start
+```
+
+Spawns a detached FastAPI server at `http://localhost:8002`. Verify with:
+
+```bash
+.venv/bin/python cli/main.py status
+```
+
+**If startup fails:**
+
+| Symptom | Fix |
+|---|---|
+| Port already in use | `lsof -i :8002`; kill conflicting process or set `NOUI_PORT` in `.env` |
+| `uvicorn not found` | Deps not installed — run `poetry install --no-root` |
+| Did not become ready | Check `.noui-backend.log` in the repo root |
+
+---
+
+## Step 2 — Create a Login Recording Session
+
+```bash
+.venv/bin/python cli/main.py login record "<AppName>" "<login-url>"
+```
+
+Example:
+
+```bash
+.venv/bin/python cli/main.py login record "HubSpot" "https://app.hubspot.com/login"
+```
+
+The CLI creates a session and prints the `session_id`. Note it — you need it for the export step.
+
+---
+
+## Step 3 — Record in Chrome
+
+> **Extension UX note:** The dedicated "Login Recording Mode" button is not currently wired into the extension popup. The popup exposes a project/process/capture UI (`Create Project → Start Capture → Stop`), but `startLoginRecording` in `api.js` is not called from `popup.js`. To activate the login recorder you must send messages directly to the extension service worker.
+
+**Trigger login recording via the service worker console:**
+
+1. Open `chrome://extensions/`, find **NoUI Workflow Recorder**, and click the **service worker** link to open its DevTools console.
+2. Send the following messages (replace `<session_id>` with the value from Step 2):
+
+```js
+chrome.runtime.sendMessage({
+  type: "SET_LOGIN_RECORDING_STATE",
+  captureSessionId: "<session_id>",
+  projectId: null,
+  processId: null
+}, r => console.log("state set", r));
+
+chrome.runtime.sendMessage({ type: "INJECT_LOGIN_RECORDER" }, r => console.log("recorder injected", r));
+```
+
+3. Navigate to the login URL in the active Chrome tab.
+4. Perform the complete login flow: enter credentials, submit, and wait for the authenticated page to fully settle.
+5. Stop recording and mark the session complete:
+
+```js
+chrome.runtime.sendMessage({ type: "REMOVE_LOGIN_RECORDER" }, r => console.log("recorder removed", r));
+chrome.runtime.sendMessage({ type: "CLEAR_LOGIN_RECORDING_STATE" }, r => console.log("state cleared", r));
+```
+
+Then mark the session complete on the backend:
+
+```bash
+curl -s -X POST http://localhost:8002/login-sessions/<session_id>/complete | python -m json.tool
+```
+
+> If the session capture appears empty on export, check the service worker console for `LOGIN_CLICK_EVENT` / `LOGIN_INPUT_EVENT` messages during the recording — their absence means the recorder was not injected correctly. Retry from sub-step 2.
+
+---
+
+## Step 4 — Export the Bundle
+
+```bash
+.venv/bin/python cli/main.py login export <session_id>
+```
+
+Analyzes the captured session and writes:
+
+```
+login_recordings/<session_id8>-bundle.json
+```
+
+The bundle contains the application draft, service profile draft, inferred login steps, and review items.
+
+---
+
+## Step 5 — Review the Bundle
+
+```bash
+.venv/bin/python cli/main.py login review login_recordings/noui-<session_id8>-bundle.json
+```
+
+Check the output for:
+
+- `Generator valid: No` — hard block; do not proceed to register; re-record
+- `Errors:` section — must resolve before registering
+- `Warnings:` section — review selector confidence; re-record if confidence is low
+- `Generated login steps:` — verify the inferred steps match the actual login flow
+
+**Only proceed to Step 6 if `Generator valid: Yes` and no errors.**
+
+---
+
+## Step 6 — Register with Tabby
+
+Tabby must be reachable at `TABBY_API_HOST` (default `http://localhost:8080`) and `TABBY_ADMIN_TOKEN` must be set in `.env`.
+
+> **If Tabby is not yet running:** run `noui tabby start` then `noui tabby setup` (interactive) to start the service and provision agent credentials before registering. See `/noui-setup` for the full Tabby CLI reference.
+
+```bash
+.venv/bin/python cli/main.py login register login_recordings/noui-<session_id8>-bundle.json
+```
+
+Provisions a Tabby Application and a STAGING ServiceProfile. On success:
+
+```
+Registered profile '<profile_id>'
+  Tabby profile ID : <tabby_profile_id>
+  Version state    : STAGING
+```
+
+**Record the `tabby_profile_id` value** — this is the `--profile` argument for `workflow export-mcp`.
+
+---
+
+## Step 7 — Validate the Profile
+
+```bash
+.venv/bin/python cli/main.py login validate login_recordings/noui-<session_id8>-bundle.json
+```
+
+Polls Tabby for up to 60 seconds waiting for the profile to reach HEALTHY state.
+
+**If validation fails:**
+
+| Symptom | Fix |
+|---|---|
+| Profile enters FAILED state | Re-record with slower, more deliberate interactions |
+| Timeout (60s) | Check Tabby logs; confirm `TABBY_API_HOST` is reachable |
+| Keepalive URL errors | The keepalive URL must return HTTP 200 when authenticated — redirect-only URLs are not valid |
+
+---
+
+## Step 8 — Ensure a Live Tabby Browser Session
+
+A HEALTHY profile in Tabby is a service configuration record. It does **not** mean a live browser session is running. The runtime auth adapter (`noui_runtime/auth.py`) needs an active session worker to fetch credentials at tool-call time.
+
+```bash
+.venv/bin/python cli/main.py tabby session ensure
+```
+
+Starts (or verifies) a persistent browser session worker for the registered profile. Expected output:
+
+```
+Session worker healthy for profile <tabby_profile_id>
+```
+
+**If this fails:**
+
+| Symptom | Fix |
+|---|---|
+| `TABBY_CLIENT_ID` / `TABBY_CLIENT_SECRET` not set | Run `tabby setup` to provision agent credentials and write them to `.env` |
+| Worker starts but immediately exits | Check `.noui-backend.log`; confirm Tabby is reachable at `TABBY_API_HOST` |
+| Profile not found | Confirm `TABBY_ADMIN_TOKEN` is correct and the profile was registered via `login register` |
+
+> You only need to do this once per machine restart, or if the session worker has stopped. Run `tabby session status` to check current state without starting a new worker.
+
+---
+
+## Convenience Path (clean recordings only)
+
+```bash
+.venv/bin/python cli/main.py login import <session_id>
+.venv/bin/python cli/main.py login import <session_id> --validate
+```
+
+Runs export + review + register in one command (and optionally validate). Use only for recordings with no expected issues — the decomposed flow above is easier to debug.
+
+---
+
+## Output
+
+On completion you have:
+- `login_recordings/noui-<session_id8>-bundle.json`
+- `tabby_profile_id` — printed by `login register`
+- A live Tabby browser session confirmed via `tabby session ensure`
+
+Pass the `tabby_profile_id` to `/noui-record-workflow` via `--profile`. The session worker must remain running during workflow recording and runtime use.
+
+---
+
+## Decision Flow
+
+```
+Start
+  │
+  ├─ backend running?
+  │     ├─ No  → Step 1: start
+  │     └─ Yes → continue
+  │
+  Step 2: login record "<App>" "<url>" → note session_id
+  │
+  Step 3: Chrome (inject login recorder via service worker console)
+    └─ no LOGIN_CLICK_EVENTs? → recorder not injected, retry Step 3
+  │
+  Step 4: login export <session_id>
+    └─ writes noui-<id8>-bundle.json
+  │
+  Step 5: login review <bundle.json>
+    ├─ generator errors? → re-record (return to Step 2)
+    └─ clean → continue
+  │
+  Step 6: login register <bundle.json> → note tabby_profile_id
+  │
+  Step 7: login validate <bundle.json>
+    ├─ HEALTHY → continue
+    └─ FAILED  → re-record (return to Step 2)
+  │
+  Step 8: tabby session ensure
+    └─ session worker healthy → pass tabby_profile_id to /record-workflow
+```
+
+---
+
+## CLI Command Reference
+
+| Command | Purpose |
+|---|---|
+| `.venv/bin/python cli/main.py start` | Start the NoUI backend |
+| `.venv/bin/python cli/main.py status` | Check backend and Tabby reachability |
+| `.venv/bin/python cli/main.py login record "<App>" "<url>"` | Create a login recording session |
+| `.venv/bin/python cli/main.py login list` | List existing login sessions |
+| `.venv/bin/python cli/main.py login export <session_id>` | Analyze session → write bundle JSON |
+| `.venv/bin/python cli/main.py login review <bundle.json>` | Print validation and review items |
+| `.venv/bin/python cli/main.py login register <bundle.json>` | Provision Application + STAGING ServiceProfile in Tabby |
+| `.venv/bin/python cli/main.py login validate <bundle.json>` | Wait for profile to become HEALTHY |
+| `.venv/bin/python cli/main.py login import <session_id>` | Convenience: export + review + register |
+| `.venv/bin/python cli/main.py login import <session_id> --validate` | Convenience: export + review + register + validate |
+| `.venv/bin/python cli/main.py tabby session ensure` | Start or verify a live browser session worker |
+| `.venv/bin/python cli/main.py tabby session status` | Show current browser session state |
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Backend not running | `.venv/bin/python cli/main.py start` |
+| `Tabby API not reachable` | Confirm Tabby is running; check `TABBY_API_HOST` in `.env` |
+| Bundle has generator errors | Re-record with slower, explicit interactions; avoid rapid clicks |
+| Used Workflow Recording instead of Login Recording Mode | Discard session; start new `login record` from Step 2 |
+| Low selector confidence in review | Re-record; interact with fields one at a time with visible focus |
+| Validate timeout (60s) | Check Tabby logs; verify the keepalive URL returns HTTP 200 when authenticated |
+| Keepalive URL is redirect-only | Find a URL that loads authenticated content, not a redirect chain |

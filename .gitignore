@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+backend/data/
+*.log
+*.pid
+.noui-backend.pid
+.noui-backend.log
+poetry.lock

@@ -1,0 +1,80 @@
+[tool.poetry]
+name = "noui"
+version = "0.1.0"
+description = "NoUI backend service for capturing browser sessions from a Chrome extension."
+authors = ["Adopt AI <contact@adopt.ai>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+fastapi = ">=0.115.0"
+uvicorn = {version = ">=0.32.0", extras = ["standard"]}
+sqlalchemy = {version = ">=2.0", extras = ["asyncio"]}
+aiosqlite = ">=0.20.0"
+pydantic = ">=2.0.0"
+python-dotenv = ">=1.0.0"
+python-multipart = ">=0.0.9"
+colorama = ">=0.4.6"
+mcp = ">=1.0.0"
+anthropic = ">=0.43.0"
+sse-starlette = ">=2.0.0"
+Jinja2 = ">=3.1.0"
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.lint.dependencies]
+ruff = ">=0.4.0"
+mypy = ">=1.10.0"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+ruff = ">=0.4.0"
+mypy = ">=1.10.0"
+pre-commit = ">=3.7.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B", "C4", "SIM", "UP"]
+ignore = [
+    "E501",    # line too long — handled by formatter
+    "SIM102",  # nested if → single if (style preference)
+    "SIM105",  # contextlib.suppress — verbose for CLI scripts
+    "SIM108",  # ternary operator — readability preference
+    "N806",    # uppercase variable in function — used for constants
+    "B905",    # zip() strict= — Python 3.10+ only at call sites we don't control
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+warn_return_any = false
+no_implicit_reexport = true
+strict_equality = true
+show_error_codes = true
