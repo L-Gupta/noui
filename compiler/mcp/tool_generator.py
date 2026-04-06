@@ -108,13 +108,19 @@ def generate_operation_module(tool: dict, tabby_profile_id: str) -> str:
         sig_str = ""
 
     # Build HTTP method call arguments
+    uses_auth = bool(tabby_profile_id)
     method_lower = method.lower()
     http_args_parts = ["url, "]
     if body_params:
         http_args_parts.append("json=body, ")
     if query_params:
         http_args_parts.append("params=qs, ")
-    http_args_parts.append("headers=auth")
+    if uses_auth:
+        http_args_parts.append("headers=auth")
+    else:
+        # Strip trailing ", " if no headers arg follows
+        if http_args_parts[-1].endswith(", "):
+            http_args_parts[-1] = http_args_parts[-1][:-2]
     http_args = "".join(http_args_parts)
 
     # Assemble function body lines (each already at 4-space indent)
@@ -135,7 +141,8 @@ def generate_operation_module(tool: dict, tabby_profile_id: str) -> str:
         body_lines.append("    }")
         body_lines.append("")
 
-    body_lines.append("    auth = await get_auth_headers(TABBY_PROFILE_ID)")
+    if uses_auth:
+        body_lines.append("    auth = await get_auth_headers(TABBY_PROFILE_ID)")
     body_lines.append(f"    url = {url_expr}")
     body_lines.append("    async with httpx.AsyncClient() as client:")
     body_lines.append(f"        resp = await client.{method_lower}({http_args})")
@@ -147,6 +154,9 @@ def generate_operation_module(tool: dict, tabby_profile_id: str) -> str:
 
     func_body = "\n".join(body_lines)
 
+    auth_import = "from noui_runtime.auth import get_auth_headers\n" if uses_auth else ""
+    profile_const = f'TABBY_PROFILE_ID = "{tabby_profile_id}"\n' if uses_auth else ""
+
     source = (
         f'"""Auto-generated operation: {name}\n'
         f"Method: {method}\n"
@@ -156,10 +166,10 @@ def generate_operation_module(tool: dict, tabby_profile_id: str) -> str:
         "from __future__ import annotations\n"
         "\n"
         "import httpx\n"
-        "from noui_runtime.auth import get_auth_headers\n"
+        f"{auth_import}"
         "\n"
         f'BASE_URL = "{base_url}"\n'
-        f'TABBY_PROFILE_ID = "{tabby_profile_id}"\n'
+        f"{profile_const}"
         "\n"
         "\n"
         f"async def execute({sig_str}) -> dict:\n"

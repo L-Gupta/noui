@@ -140,7 +140,7 @@ async def delete_workflow_session(
 @router.post("/{session_id}/export-mcp")
 async def export_mcp(
     session_id: str,
-    tabby_profile_id: str = Query(..., description="Tabby profile ID for auth binding"),
+    tabby_profile_id: str = Query("", description="Tabby profile ID for auth binding (omit for public/unauthenticated APIs)"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Compile a workflow recording into a runnable FastMCP server.

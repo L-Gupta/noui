@@ -49,7 +49,8 @@ def generate_manifest(
             "workflow_session_id": workflow_session_id,
         },
         "auth": {
-            "tabby_profile_id": tabby_profile_id,
+            "tabby_profile_id": tabby_profile_id or None,
+            "requires_auth": bool(tabby_profile_id),
         },
         "runtime": {
             "type": "fastmcp",
