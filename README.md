@@ -191,12 +191,12 @@ cp .env.example .env
 
 ------------------------------------------------------------------------
 
-## 🤖 Claude Code Skills
+## 🤖 Agent Skills
 
-Install the NoUI skills into your project so Claude Code can guide you through the full workflow:
+Install the NoUI skills into your project so your Agent (Claude Code, Codex, OpenClaw...) can guide you through the full workflow:
 
 ```bash
-npx skills add <github-owner>/noui
+npx skills add adoptai/noui
 ```
 
 Then run `/noui-setup` in Claude Code to configure the environment.
