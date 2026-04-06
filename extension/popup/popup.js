@@ -214,29 +214,29 @@ function App() {
 
   async function loadProjects() {
     try {
-      const data = await api.listProjects();
-      setProjects(data);
+      const [workflows, logins] = await Promise.all([
+        api.listWorkflowSessions().catch(() => []),
+        api.listLoginSessions().catch(() => []),
+      ]);
+      const toProject = (s, type) => ({ ...s, base_url: s.start_url || s.login_url, _type: type });
+      setProjects([
+        ...workflows.map((s) => toProject(s, "workflow")),
+        ...logins.map((s) => toProject(s, "login")),
+      ]);
     } catch (e) {
-      console.error("Failed to load projects:", e);
+      console.error("Failed to load sessions:", e);
     }
   }
 
   async function openProject(id) {
     try {
-      const proj = await api.getProject(id);
+      // Use the already-loaded session object from state (avoids /projects/:id 404)
+      const proj = projects.find((p) => p.id === id) || { id };
       setCurrentProject(proj);
-      setProcesses(proj.processes || []);
-      // Load chat sessions and set active to most recent
-      const sessions = await api.listChatSessions({ project_id: id });
-      setChatSessions(sessions);
-      if (sessions.length > 0) {
-        setActiveChatSession(sessions[0]); // sorted by updated_at desc
-        const msgs = await api.listMessages({ project_id: id, chat_session_id: sessions[0].id });
-        setMessages(msgs);
-      } else {
-        setActiveChatSession(null);
-        setMessages([]);
-      }
+      setProcesses([]);
+      setChatSessions([]);
+      setActiveChatSession(null);
+      setMessages([]);
       loadCaptures(id, null);
       loadTimeline(id, null);
       loadDocuments(id, null);
