@@ -2,8 +2,8 @@
 
 > **Skip the UI. Turn any website into fast, reliable APIs for
 > agents.**\
-> *Go beyond Claw. Call the underlying APIs.*
-> *Skip Computer-use Agents*
+> *Go beyond Claw. Call the underlying APIs.*\
+> *Skip Computer-use Agents.*
 
 ------------------------------------------------------------------------
 
