@@ -725,13 +725,18 @@ function App() {
 
   async function handleDeleteProject(id) {
     try {
-      await api.deleteProject(id);
-      showToast("Project deleted", "info");
+      const session = projects.find((p) => p.id === id);
+      if (session?._type === "login") {
+        await api.deleteLoginSession(id);
+      } else {
+        await api.deleteWorkflowSession(id);
+      }
+      showToast("Session deleted", "info");
       setCurrentProject(null);
       setView("projects");
       loadProjects();
     } catch (e) {
-      showToast("Failed to delete project: " + e.message, "error");
+      showToast("Failed to delete session: " + e.message, "error");
     }
   }
 

@@ -342,6 +342,8 @@ export const listWorkflowSessions = () => api("GET", "/workflow-sessions");
 export const getWorkflowSession = (id) => api("GET", `/workflow-sessions/${id}`);
 export const startWorkflowSession = (id) => api("POST", `/workflow-sessions/${id}/start`);
 export const completeWorkflowSession = (id) => api("POST", `/workflow-sessions/${id}/complete`);
+export const deleteWorkflowSession = (id) => api("DELETE", `/workflow-sessions/${id}`);
+export const deleteLoginSession = (id) => api("DELETE", `/login-sessions/${id}`);
 export const exportWorkflowMcp = (id, tabbyProfileId) =>
   api("POST", `/workflow-sessions/${id}/export-mcp?tabby_profile_id=${encodeURIComponent(tabbyProfileId)}`);
 
