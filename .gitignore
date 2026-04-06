@@ -9,3 +9,4 @@ backend/data/
 *.pid
 .noui-backend.pid
 .noui-backend.log
+poetry.lock
