@@ -27,7 +27,8 @@ Computer-use agents simulate humans: - 🐢 Slow (UI loops, page loads) -
 💸 Expensive (token-heavy, step-heavy) - 🧱 Fragile (break on UI
 changes)
 
-**NoUI executes software directly:** - ⚡ **Fast** --- direct API calls\
+**NoUI executes software directly:**
+- ⚡ **Fast** --- direct API calls\
 - 💸 **Cheap** --- fewer steps, fewer tokens\
 - 🎯 **Reliable** --- uses the same APIs the app uses internally
 
