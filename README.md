@@ -28,8 +28,8 @@ Computer-use agents simulate humans: - 🐢 Slow (UI loops, page loads) -
 changes)
 
 **NoUI executes software directly:**
-- ⚡ **Fast** --- direct API calls\
-- 💸 **Cheap** --- fewer steps, fewer tokens\
+- ⚡ **Fast** --- direct API calls
+- 💸 **Cheap** --- fewer steps, fewer tokens
 - 🎯 **Reliable** --- uses the same APIs the app uses internally
 
 > **Stop automating clicks. Execute software.**
@@ -38,11 +38,11 @@ changes)
 
 ## 🧠 How it works
 
-1.  Record a session (Chrome extension + voice)\
-2.  Extract HAR traces + intent\
-3.  Convert into Python API functions\
-4.  Maintain authenticated sessions via Tabby\
-5.  Expose everything as an MCP endpoint\
+1.  Record a session (Chrome extension + voice)
+2.  Extract HAR traces + intent
+3.  Convert into Python API functions
+4.  Maintain authenticated sessions via Tabby
+5.  Expose everything as an MCP endpoint
 6.  Agents call APIs instead of clicking UI
 
 ------------------------------------------------------------------------
