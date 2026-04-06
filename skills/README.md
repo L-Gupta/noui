@@ -35,7 +35,7 @@ python3 -m venv .venv
 → poetry install --no-root
 → cp .env.example .env (set ANTHROPIC_API_KEY)
 → Load noui/extension/ in Chrome (Developer mode)
-→ Verify with: .venv/bin/python3.12 cli/main.py status
+→ Verify with: .venv/bin/python cli/main.py status
 ```
 
 ---
@@ -49,13 +49,14 @@ Record a login flow for an app that requires authentication and register it with
 ```
 start backend
 → login record "<App>" "<url>"
-→ Chrome: Login Recording Mode → complete login → Complete
+→ Chrome: inject login recorder via service worker console → perform login → stop recorder + POST /complete
 → login export → login review (check generator_valid)
 → login register (note tabby_profile_id)
 → login validate (wait for HEALTHY)
+→ tabby session ensure (start live browser session worker)
 ```
 
-Output: `tabby_profile_id` → used in `/record-workflow --profile`
+Output: `tabby_profile_id` + live session worker → used in `/record-workflow --profile`
 
 ---
 
@@ -67,12 +68,14 @@ Record a browser workflow and compile it into a runnable FastMCP server. Support
 
 ```
 Path A (authenticated):
-  start backend → workflow record → Chrome: Workflow Recording → Complete
-  → workflow export-mcp <session_id> --profile <tabby_profile_id>
+  start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
+  → workflow captures (note capture_session_id)
+  → workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
 
 Path B (unauthenticated / public API):
-  start backend → workflow record → Chrome: Workflow Recording → Complete
-  → workflow export-mcp <session_id>
+  start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
+  → workflow captures (note capture_session_id)
+  → workflow export-mcp <session_id> --capture-session <capture_session_id>
 ```
 
 Output: `server_id` → used in `/noui-mcp`
@@ -95,7 +98,7 @@ mcp stop <server_id>        → stop server
 
 ## CLI Reference
 
-All commands: `.venv/bin/python3.12 cli/main.py <command>` from the `noui/` directory.
+All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` directory.
 
 | Command | Purpose |
 |---|---|

@@ -7,9 +7,9 @@ description: Use this skill when the user wants to record a browser workflow and
 
 Record a browser workflow and compile it into a runnable FastMCP server. Works for both authenticated apps (requires a `tabby_profile_id` from `/noui-record-login`) and public apps with no auth.
 
-All commands run from the `noui/` directory using `.venv/bin/python3.12 cli/main.py`.
+All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`.
 
-**Prerequisite:** `/noui-setup` must be complete. For authenticated apps, `/noui-record-login` must also be complete and you must have the `tabby_profile_id`.
+**Prerequisite:** `/noui-setup` must be complete. For authenticated apps (Path A), `/noui-record-login` must also be complete, you must have the `tabby_profile_id`, **and a live Tabby browser session must be running** (`tabby session ensure` from Step 8 of `/noui-record-login`).
 
 ---
 
@@ -39,13 +39,13 @@ The steps are identical except that Path A passes `--profile <tabby_profile_id>`
 ## Step 1 — Start the Backend
 
 ```bash
-.venv/bin/python3.12 cli/main.py start
+.venv/bin/python cli/main.py start
 ```
 
 Spawns a detached FastAPI server at `http://localhost:8002`. Verify with:
 
 ```bash
-.venv/bin/python3.12 cli/main.py status
+.venv/bin/python cli/main.py status
 ```
 
 **If startup fails:** See the troubleshooting table in `/noui-setup`.
@@ -55,17 +55,17 @@ Spawns a detached FastAPI server at `http://localhost:8002`. Verify with:
 ## Step 2 — Create a Workflow Recording Session
 
 ```bash
-.venv/bin/python3.12 cli/main.py workflow record "<WorkflowName>" "<start-url>"
+.venv/bin/python cli/main.py workflow record "<WorkflowName>" "<start-url>"
 ```
 
 Examples:
 
 ```bash
 # Path A — authenticated
-.venv/bin/python3.12 cli/main.py workflow record "Create Contact" "https://app.hubspot.com/contacts"
+.venv/bin/python cli/main.py workflow record "Create Contact" "https://app.hubspot.com/contacts"
 
 # Path B — unauthenticated
-.venv/bin/python3.12 cli/main.py workflow record "Fetch Posts" "https://jsonplaceholder.typicode.com"
+.venv/bin/python cli/main.py workflow record "Fetch Posts" "https://jsonplaceholder.typicode.com"
 ```
 
 The CLI creates a session and prints the `session_id`. Note it.
@@ -82,19 +82,13 @@ Tell the user to perform these steps in the **NoUI Workflow Recorder** extension
 4. Perform the complete workflow you want to automate
 5. Click **Stop** when done
 
-After stopping, get the **capture session ID** from the DB:
+After stopping, get the **capture session ID** from the CLI:
 
 ```bash
-.venv/bin/python3.12 -c "
-import sqlite3
-conn = sqlite3.connect('backend/data/noui.db')
-rows = conn.execute('SELECT id, status FROM capture_sessions ORDER BY rowid DESC LIMIT 3').fetchall()
-for r in rows: print(r)
-conn.close()
-"
+.venv/bin/python cli/main.py workflow captures
 ```
 
-Note the `capture_session_id` of the most recent stopped session.
+Lists all capture sessions with their IDs and statuses. Note the `id` of the most recent `stopped` session — that is your `capture_session_id`.
 
 > For Path A (authenticated apps): navigate to the authenticated starting point manually before starting capture — credentials are managed separately via Tabby.
 
@@ -107,13 +101,13 @@ Pass both the `session_id` (from Step 2) and the `capture_session_id` (from Step
 ### Path A — Authenticated
 
 ```bash
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
+.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
 ```
 
 ### Path B — Unauthenticated
 
 ```bash
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id>
+.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id>
 ```
 
 The CLI compiles the captured HAR and click events into a FastMCP server and writes it to:
@@ -160,7 +154,7 @@ Start
   Step 2: workflow record "<Name>" "<url>" → note session_id
   │
   Step 3: Chrome (Start Capture → perform workflow → Stop)
-    └─ get capture_session_id from DB
+    └─ get capture_session_id: workflow captures
   │
   Step 4:
     Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile <tabby_profile_id>
@@ -176,12 +170,13 @@ Start
 
 | Command | Purpose |
 |---|---|
-| `.venv/bin/python3.12 cli/main.py start` | Start the NoUI backend |
-| `.venv/bin/python3.12 cli/main.py status` | Check backend reachability and session counts |
-| `.venv/bin/python3.12 cli/main.py workflow record "<Name>" "<url>"` | Create a workflow recording session |
-| `.venv/bin/python3.12 cli/main.py workflow list` | List existing workflow sessions |
-| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
-| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile <id>` | Compile session → FastMCP server (authenticated) |
+| `.venv/bin/python cli/main.py start` | Start the NoUI backend |
+| `.venv/bin/python cli/main.py status` | Check backend reachability and session counts |
+| `.venv/bin/python cli/main.py workflow record "<Name>" "<url>"` | Create a workflow recording session |
+| `.venv/bin/python cli/main.py workflow list` | List existing workflow sessions |
+| `.venv/bin/python cli/main.py workflow captures` | List capture sessions recorded via the extension (use this to get `capture_session_id`) |
+| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
+| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile <id>` | Compile session → FastMCP server (authenticated) |
 
 ---
 
@@ -189,7 +184,7 @@ Start
 
 | Symptom | Fix |
 |---|---|
-| Backend not running | `.venv/bin/python3.12 cli/main.py start` |
+| Backend not running | `.venv/bin/python cli/main.py start` |
 | `session_id` not found | Run `workflow list` to confirm the session was created |
 | Export fails: "No HAR file found for this session" | Extension did not capture HAR — confirm Capture was active during the workflow |
 | Export fails: "Workflow session not found" | The `session_id` doesn't match any workflow session — run `workflow list` |

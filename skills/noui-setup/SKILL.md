@@ -13,7 +13,7 @@ All commands run from the `noui/` directory (the repo root).
 
 ## Critical Rules (Never Violate)
 
-- **ALWAYS** use `.venv/bin/python3.12 cli/main.py` for all CLI invocations — never the system `python` or `python3`
+- **ALWAYS** use `.venv/bin/python cli/main.py` for all CLI invocations — never the system `python` or `python3`
 - **NEVER** run `pip install` individual packages — all deps are managed by `poetry install --no-root`
 - **NEVER** run `pip install -e .` — the project uses `package-mode = false` in `pyproject.toml` and does not support editable installs
 - **ALWAYS** copy `.env.example` to `.env` and set `ANTHROPIC_API_KEY` before running the backend
@@ -27,17 +27,17 @@ All commands run from the `noui/` directory (the repo root).
 python3 -m venv .venv
 ```
 
-Creates `.venv/` in the repo root. All subsequent commands use `.venv/bin/python3.12`.
+Creates `.venv/` in the repo root. All subsequent commands use `.venv/bin/python`.
 
-If `python3 --version` returns something older than 3.11, use `python3.12 -m venv .venv` explicitly.
+If `python3 --version` returns something older than 3.11, use `python3.11 -m venv .venv` or `python3.12 -m venv .venv` explicitly (both are supported; the project requires >=3.11).
 
 ---
 
 ## Step 2 — Install Dependencies
 
 ```bash
-.venv/bin/python3.12 -m pip install poetry
-.venv/bin/python3.12 -m poetry install --no-root
+.venv/bin/python -m pip install poetry
+.venv/bin/python -m poetry install --no-root
 ```
 
 `--no-root` is required because `pyproject.toml` sets `package-mode = false`. All runtime deps (FastAPI, FastMCP, Anthropic SDK, SQLAlchemy, httpx, etc.) are installed into `.venv`.
@@ -47,7 +47,7 @@ If `python3 --version` returns something older than 3.11, use `python3.12 -m ven
 | Error | Fix |
 |---|---|
 | `ModuleNotFoundError: No module named 'poetry'` | Re-run the `pip install poetry` step above |
-| `python3.12: command not found` | Install Python 3.12 via your OS package manager |
+| `python3: command not found` or version < 3.11 | Install Python 3.11 or 3.12 via your OS package manager, then re-create the venv with that interpreter |
 | `This build backend cannot be used in 'editable' mode` | You ran `pip install -e .` — use `poetry install --no-root` instead |
 
 ---
@@ -88,7 +88,7 @@ If you only need unauthenticated app support, `ANTHROPIC_API_KEY` is the only re
 ## Step 5 — Verify the Installation
 
 ```bash
-.venv/bin/python3.12 cli/main.py status
+.venv/bin/python cli/main.py status
 ```
 
 Expected output when the backend has not yet been started:
@@ -123,7 +123,7 @@ Start
   │     ├─ No  → Step 4: Load unpacked from noui/extension/
   │     └─ Yes → skip
   │
-  └─ Step 5: .venv/bin/python3.12 cli/main.py status
+  └─ Step 5: .venv/bin/python cli/main.py status
        └─ Ready → proceed to /record-login or /record-workflow
 ```
 
@@ -133,16 +133,16 @@ Start
 
 | Command | Purpose |
 |---|---|
-| `.venv/bin/python3.12 cli/main.py status` | Verify backend reachability and session counts |
-| `.venv/bin/python3.12 cli/main.py start` | Start the FastAPI backend on port 8002 |
-| `.venv/bin/python3.12 cli/main.py stop` | Stop the backend |
-| `.venv/bin/python3.12 cli/main.py tabby status` | Check Docker Compose services and Tabby API liveness |
-| `.venv/bin/python3.12 cli/main.py tabby start` | Start Docker Compose infra and Tabby API |
-| `.venv/bin/python3.12 cli/main.py tabby stop [--infra]` | Stop the Tabby API (and optionally Docker Compose) |
-| `.venv/bin/python3.12 cli/main.py tabby setup` | Full Tabby provisioning: agent client + ServiceProfiles + write TABBY_* to `.env` |
-| `.venv/bin/python3.12 cli/main.py tabby session status` | Show browser session state for configured profiles |
-| `.venv/bin/python3.12 cli/main.py tabby session ensure` | Ensure a HEALTHY browser session exists |
-| `.venv/bin/python3.12 cli/main.py tabby session stop` | Stop the locally-running worker |
+| `.venv/bin/python cli/main.py status` | Verify backend reachability and session counts |
+| `.venv/bin/python cli/main.py start` | Start the FastAPI backend on port 8002 |
+| `.venv/bin/python cli/main.py stop` | Stop the backend |
+| `.venv/bin/python cli/main.py tabby status` | Check Docker Compose services and Tabby API liveness |
+| `.venv/bin/python cli/main.py tabby start` | Start Docker Compose infra and Tabby API |
+| `.venv/bin/python cli/main.py tabby stop [--infra]` | Stop the Tabby API (and optionally Docker Compose) |
+| `.venv/bin/python cli/main.py tabby setup` | Full Tabby provisioning: agent client + ServiceProfiles + write TABBY_* to `.env` |
+| `.venv/bin/python cli/main.py tabby session status` | Show browser session state for configured profiles |
+| `.venv/bin/python cli/main.py tabby session ensure` | Ensure a HEALTHY browser session exists |
+| `.venv/bin/python cli/main.py tabby session stop` | Stop the locally-running worker |
 
 > **Tabby setup** — for authenticated app workflows, run `tabby start` then `tabby setup` (interactive) to provision agent credentials and ServiceProfiles. This writes `TABBY_CLIENT_ID`, `TABBY_CLIENT_SECRET`, and `TABBY_API_URL` to `.env`. You still need `TABBY_ADMIN_TOKEN` (or `ADMIN_BOOTSTRAP_EMAIL`/`ADMIN_BOOTSTRAP_PASSWORD` in `tabby/.env.local`) for the provisioning step.
 
