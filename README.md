@@ -11,8 +11,8 @@
 
 **NoUI turns any website into an API your agents can call.**
 
-Instead of automating clicks and scraping the UI, NoUI: 1. Records how
-you use a website\
+Instead of automating clicks and scraping the UI, NoUI: \
+1. Records how you use a website\
 2. Extracts the underlying APIs\
 3. Converts them into callable Python functions\
 4. Exposes them via MCP for agents
