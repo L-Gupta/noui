@@ -29,10 +29,10 @@ The steps are identical except that Path A passes `--profile <tabby_profile_id>`
 ## Critical Rules (Never Violate)
 
 - **ALWAYS** start the backend before asking the user to record
-- **ALWAYS** use **Workflow Recording** mode in the extension — not Login Recording Mode
 - **NEVER** skip `workflow export-mcp` — recording alone produces no server
 - For Path A: **NEVER** omit `--profile` — without it the generated server makes unauthenticated requests and will fail against protected endpoints
 - **ALWAYS** note the `server_id` printed after export — it is required for all `mcp` commands
+- **ALWAYS** create the workflow session with the CLI before the user records in Chrome — the session_id is needed for export
 
 ---
 
@@ -74,32 +74,46 @@ The CLI creates a session and prints the `session_id`. Note it.
 
 ## Step 3 — Record in Chrome
 
-Tell the user to perform these steps:
+Tell the user to perform these steps in the **NoUI Workflow Recorder** extension:
 
-1. Click the **NoUI Workflow Recorder** extension icon in the Chrome toolbar
-2. Select **Workflow Recording** mode — not Login Recording Mode
-3. Navigate to the start URL printed in Step 2
+1. Click the extension icon in the Chrome toolbar
+2. Create a **Project** (or select an existing one)
+3. Click **Start Capture** to begin recording
 4. Perform the complete workflow you want to automate
-5. Click **Complete** in the extension popup when done
+5. Click **Stop** when done
 
-> For Path A (authenticated apps): you are recording the workflow actions, not the login. Navigate to the authenticated starting point manually before clicking **Complete** — the credentials are managed separately via Tabby.
+After stopping, get the **capture session ID** from the DB:
 
-> Tip: perform each step at a natural pace. A brief pause between major actions helps the compiler associate clicks to HTTP calls correctly.
+```bash
+.venv/bin/python3.12 -c "
+import sqlite3
+conn = sqlite3.connect('backend/data/noui.db')
+rows = conn.execute('SELECT id, status FROM capture_sessions ORDER BY rowid DESC LIMIT 3').fetchall()
+for r in rows: print(r)
+conn.close()
+"
+```
+
+Note the `capture_session_id` of the most recent stopped session.
+
+> For Path A (authenticated apps): navigate to the authenticated starting point manually before starting capture — credentials are managed separately via Tabby.
 
 ---
 
 ## Step 4 — Export as FastMCP Server
 
+Pass both the `session_id` (from Step 2) and the `capture_session_id` (from Step 3):
+
 ### Path A — Authenticated
 
 ```bash
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --profile <tabby_profile_id>
+.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
 ```
 
 ### Path B — Unauthenticated
 
 ```bash
-.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id>
+.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id>
 ```
 
 The CLI compiles the captured HAR and click events into a FastMCP server and writes it to:
@@ -126,6 +140,8 @@ MCP server generated:
 
 **Note the `server_id`** — pass it to `/noui-mcp` to start and connect the server.
 
+> **Optional Step 5 — Generalize:** If the generated tools have unreadable raw API parameter names (`f_sid`, `bl`, `reqid`, `soc_app`), run `/noui-generalize`. Claude will read the tools, ask you questions about what you recorded, and rewrite the operations with natural-language parameters (`origin`, `destination`, `departure_date`) so they're usable by Claude Code.
+
 ---
 
 ## Decision Flow
@@ -143,12 +159,12 @@ Start
   │
   Step 2: workflow record "<Name>" "<url>" → note session_id
   │
-  Step 3: Chrome (Workflow Recording mode only)
-    └─ wrong mode? → discard session, return to Step 2
+  Step 3: Chrome (Start Capture → perform workflow → Stop)
+    └─ get capture_session_id from DB
   │
   Step 4:
-    Path A: workflow export-mcp <session_id> --profile <tabby_profile_id>
-    Path B: workflow export-mcp <session_id>
+    Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile <tabby_profile_id>
+    Path B: workflow export-mcp <session_id> --capture-session <cap_id>
     └─ note server_id
   │
   Done → pass server_id to /mcp
@@ -164,8 +180,8 @@ Start
 | `.venv/bin/python3.12 cli/main.py status` | Check backend reachability and session counts |
 | `.venv/bin/python3.12 cli/main.py workflow record "<Name>" "<url>"` | Create a workflow recording session |
 | `.venv/bin/python3.12 cli/main.py workflow list` | List existing workflow sessions |
-| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id>` | Compile session → FastMCP server (unauthenticated) |
-| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --profile <id>` | Compile session → FastMCP server (authenticated) |
+| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
+| `.venv/bin/python3.12 cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile <id>` | Compile session → FastMCP server (authenticated) |
 
 ---
 
@@ -175,8 +191,9 @@ Start
 |---|---|
 | Backend not running | `.venv/bin/python3.12 cli/main.py start` |
 | `session_id` not found | Run `workflow list` to confirm the session was created |
-| Export fails: "No HAR file found for this session" | Extension did not capture traffic — confirm Workflow Recording mode was active |
-| Used Login Recording Mode instead of Workflow Recording | Discard the session; start a new `workflow record` from Step 2 |
+| Export fails: "No HAR file found for this session" | Extension did not capture HAR — confirm Capture was active during the workflow |
+| Export fails: "Workflow session not found" | The `session_id` doesn't match any workflow session — run `workflow list` |
 | Generated server has 0 tools | Workflow had no capturable HTTP calls — re-record navigating through the full flow |
 | Path A: server fails with auth errors at runtime | Confirm `tabby_profile_id` is correct and profile is HEALTHY via `login validate` |
 | `mcp_servers/` empty after export | Check `.noui-backend.log` in the repo root for compiler errors |
+| Tools have unreadable raw API param names (`f_sid`, `bl`, `reqid`) | Run `/noui-generalize` |

@@ -22,9 +22,10 @@ router = APIRouter(tags=["har"])
 
 
 async def _resolve_session_type(session_id: str, db: AsyncSession) -> str | None:
-    """Detect whether session_id belongs to a login or workflow session."""
+    """Detect whether session_id belongs to a login, workflow, or capture session."""
     from backend.login.models import LoginSession
     from backend.workflow.models import WorkflowSession
+    from backend.elicitation.models import CaptureSession
 
     r = await db.execute(select(LoginSession).where(LoginSession.id == session_id))
     if r.scalar_one_or_none():
@@ -32,6 +33,9 @@ async def _resolve_session_type(session_id: str, db: AsyncSession) -> str | None
     r = await db.execute(select(WorkflowSession).where(WorkflowSession.id == session_id))
     if r.scalar_one_or_none():
         return "workflow"
+    r = await db.execute(select(CaptureSession).where(CaptureSession.id == session_id))
+    if r.scalar_one_or_none():
+        return "workflow"  # capture sessions feed into the workflow export path
     return None
 
 

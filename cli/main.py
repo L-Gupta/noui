@@ -17,6 +17,7 @@ Subcommands:
 
     workflow record <name> <url>       - Create workflow session + print extension instructions
     workflow list                      - List workflow sessions
+    workflow captures                  - List capture sessions recorded via the extension
     workflow export-mcp <session_id>   - Compile workflow to FastMCP server
 
     mcp list                           - List generated MCP servers
@@ -843,6 +844,41 @@ def cmd_workflow_list(args: argparse.Namespace) -> int:  # noqa: ARG001
     return 0
 
 
+def cmd_workflow_captures(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """List capture sessions (recorded via the extension)."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    try:
+        sessions = _http("GET", "/capture-sessions")
+        assert isinstance(sessions, list)
+    except (RuntimeError, AssertionError) as exc:
+        print(_red(f"Failed to list capture sessions: {exc}"))
+        return 1
+
+    if not sessions:
+        print(_yellow("No capture sessions found."))
+        return 0
+
+    print(_bold("Capture sessions:"))
+    print()
+    for s in sessions:
+        sid = s.get("id", "?")
+        status = s.get("status") or "?"
+        project_id = s.get("project_id") or ""
+        if status == "stopped":
+            color = _green
+        elif status in ("capturing", "recording"):
+            color = _yellow
+        else:
+            color = str
+        print(f"  {_cyan(sid[:8])}  {_cyan(sid)}  {color(status)}  project:{project_id[:8] if project_id else '—'}")
+
+    print()
+    return 0
+
+
 def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
     """Compile workflow session to a FastMCP server."""
     if not _backend_alive():
@@ -851,10 +887,16 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
 
     session_id: str = args.session_id
     profile_id: str = args.profile
+    capture_session_id: str = getattr(args, "capture_session", "")
 
-    path = f"/workflow-sessions/{session_id}/export-mcp"
+    params = []
     if profile_id:
-        path += f"?tabby_profile_id={profile_id}"
+        params.append(f"tabby_profile_id={profile_id}")
+    if capture_session_id:
+        params.append(f"capture_session_id={capture_session_id}")
+    path = f"/workflow-sessions/{session_id}/export-mcp"
+    if params:
+        path += "?" + "&".join(params)
 
     print(f"Exporting workflow {_cyan(session_id)} to MCP …", end=" ", flush=True)
     try:
@@ -1138,6 +1180,7 @@ def _build_parser() -> argparse.ArgumentParser:
     wf_record.add_argument("url", help="Start URL")
 
     wf_sub.add_parser("list", help="List workflow sessions")
+    wf_sub.add_parser("captures", help="List capture sessions recorded via the extension")
 
     wf_export = wf_sub.add_parser("export-mcp", help="Compile workflow session to FastMCP server")
     wf_export.add_argument("session_id", help="Workflow session ID")
@@ -1146,6 +1189,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         metavar="TABBY_PROFILE_ID",
         help="Tabby profile ID to associate with the MCP server",
+    )
+    wf_export.add_argument(
+        "--capture-session",
+        default="",
+        metavar="CAPTURE_SESSION_ID",
+        help="Use HAR/clicks from an ABCD capture session instead of the workflow session",
     )
 
     # --- mcp ---
@@ -1200,6 +1249,7 @@ def _dispatch_workflow(args: argparse.Namespace) -> int:
     dispatch = {
         "record": cmd_workflow_record,
         "list": cmd_workflow_list,
+        "captures": cmd_workflow_captures,
         "export-mcp": cmd_workflow_export_mcp,
     }
     fn = dispatch.get(cmd)

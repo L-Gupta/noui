@@ -141,6 +141,7 @@ async def delete_workflow_session(
 async def export_mcp(
     session_id: str,
     tabby_profile_id: str = Query("", description="Tabby profile ID for auth binding (omit for public/unauthenticated APIs)"),
+    capture_session_id: str = Query("", description="ABCD capture session ID to use instead of workflow session data"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Compile a workflow recording into a runnable FastMCP server.
@@ -153,26 +154,40 @@ async def export_mcp(
     # Load workflow session
     session = await _get_session(session_id, db)
 
-    # Load ClickEvent records ordered by timestamp
+    # When recording via ABCD extension, data is stored under a capture_session_id.
+    # Fall back to the capture_session_id lookup if provided.
+    har_lookup_id = capture_session_id or session_id
+    har_session_type = "workflow"
+
+    # Load ClickEvent records — try workflow session first, then capture session
     click_result = await db.execute(
         select(ClickEvent)
-        .where(ClickEvent.session_id == session_id, ClickEvent.session_type == "workflow")
+        .where(ClickEvent.session_id == har_lookup_id, ClickEvent.session_type == har_session_type)
         .order_by(ClickEvent.timestamp)
     )
     click_rows = list(click_result.scalars().all())
 
-    # Load UrlEvent records ordered by timestamp
+    # If no clicks via session_id, try capture_session_id column
+    if not click_rows and capture_session_id:
+        click_result = await db.execute(
+            select(ClickEvent)
+            .where(ClickEvent.capture_session_id == capture_session_id)
+            .order_by(ClickEvent.timestamp)
+        )
+        click_rows = list(click_result.scalars().all())
+
+    # Load UrlEvent records
     url_result = await db.execute(
         select(UrlEvent)
-        .where(UrlEvent.session_id == session_id, UrlEvent.session_type == "workflow")
+        .where(UrlEvent.session_id == har_lookup_id, UrlEvent.session_type == har_session_type)
         .order_by(UrlEvent.timestamp)
     )
     url_rows = list(url_result.scalars().all())
 
-    # Load HarFile record
+    # Load HarFile record — try both session_id and capture_session_id
     har_result = await db.execute(
         select(HarFile)
-        .where(HarFile.session_id == session_id, HarFile.session_type == "workflow")
+        .where(HarFile.session_id == har_lookup_id)
         .order_by(HarFile.created_at.desc())
     )
     har_file = har_result.scalar_one_or_none()

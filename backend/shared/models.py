@@ -23,7 +23,11 @@ class ClickEvent(Base):
     __tablename__ = "click_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
-    # Session association (replaces abcd's project_id / process_id FKs)
+    # Elicitation (ABCD) project/process/capture_session associations
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    process_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    capture_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # NoUI session association
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     session_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # login | workflow
 

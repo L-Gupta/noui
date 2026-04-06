@@ -325,27 +325,15 @@ export const listChatSessions = (params) => {
 export const deleteChatSession = (id) => api("DELETE", `/chat/sessions/${id}`);
 export const updateChatSession = (id, data) => api("PATCH", `/chat/sessions/${id}`, data);
 
-// ── Login Sessions (NoUI) ────────────────────────────────────────────────────
+// ── Login Sessions ──────────────────────────────────────────────────────────
 
 export const createLoginSession = (data) => api("POST", "/login-sessions", data);
 export const listLoginSessions = () => api("GET", "/login-sessions");
 export const getLoginSession = (id) => api("GET", `/login-sessions/${id}`);
-export const startLoginSession = (id) => api("POST", `/login-sessions/${id}/start`);
-export const completeLoginSession = (id) => api("POST", `/login-sessions/${id}/complete`);
+export const startLoginSession = (id) => api("PUT", `/login-sessions/${id}/start`);
+export const completeLoginSession = (id) => api("PUT", `/login-sessions/${id}/complete`);
 export const analyzeLoginSession = (id) => api("POST", `/login-sessions/${id}/analyze`);
 export const getLoginBundle = (id) => api("GET", `/login-sessions/${id}/bundle`);
-
-// ── Workflow Sessions (NoUI) ──────────────────────────────────────────────────
-
-export const createWorkflowSession = (data) => api("POST", "/workflow-sessions", data);
-export const listWorkflowSessions = () => api("GET", "/workflow-sessions");
-export const getWorkflowSession = (id) => api("GET", `/workflow-sessions/${id}`);
-export const startWorkflowSession = (id) => api("POST", `/workflow-sessions/${id}/start`);
-export const completeWorkflowSession = (id) => api("POST", `/workflow-sessions/${id}/complete`);
-export const deleteWorkflowSession = (id) => api("DELETE", `/workflow-sessions/${id}`);
-export const deleteLoginSession = (id) => api("DELETE", `/login-sessions/${id}`);
-export const exportWorkflowMcp = (id, tabbyProfileId) =>
-  api("POST", `/workflow-sessions/${id}/export-mcp?tabby_profile_id=${encodeURIComponent(tabbyProfileId)}`);
 
 export function startLoginRecording({ captureSessionId, projectId, processId }) {
   return new Promise((resolve, reject) => {
