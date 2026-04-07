@@ -16,7 +16,6 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 ## Critical Rules (Never Violate)
 
 - **ALWAYS** start the backend before asking the user to record
-- **ALWAYS** use **Login Recording Mode** in the extension — not the standard Workflow Recording button
 - **ALWAYS** run `login review` after export and before register — never skip it even for clean-looking recordings
 - **NEVER** run `login register` if the review output shows `Generator valid: No` or any generator errors
 - **NEVER** use the `tabby_profile_id` in a workflow export until `login validate` succeeds with a HEALTHY state
@@ -64,40 +63,17 @@ The CLI creates a session and prints the `session_id`. Note it — you need it f
 
 ## Step 3 — Record in Chrome
 
-> **Extension UX note:** The dedicated "Login Recording Mode" button is not currently wired into the extension popup. The popup exposes a project/process/capture UI (`Create Project → Start Capture → Stop`), but `startLoginRecording` in `api.js` is not called from `popup.js`. To activate the login recorder you must send messages directly to the extension service worker.
+The CLI automatically created an App and a **Login** process in the extension (Step 2). Use the standard capture flow:
 
-**Trigger login recording via the service worker console:**
+1. Click the **NoUI Workflow Recorder** extension icon in the Chrome toolbar
+2. You will see the App (e.g., "HubSpot") in the Apps list — click it
+3. Click the **Login** process inside the app
+4. Navigate to the login URL in the active Chrome tab if not already there
+5. Click **Start Capture** to begin recording
+6. Perform the complete login flow: enter credentials, submit, and wait for the authenticated page to fully settle
+7. Click **Stop** when done
 
-1. Open `chrome://extensions/`, find **NoUI Workflow Recorder**, and click the **service worker** link to open its DevTools console.
-2. Send the following messages (replace `<session_id>` with the value from Step 2):
-
-```js
-chrome.runtime.sendMessage({
-  type: "SET_LOGIN_RECORDING_STATE",
-  captureSessionId: "<session_id>",
-  projectId: null,
-  processId: null
-}, r => console.log("state set", r));
-
-chrome.runtime.sendMessage({ type: "INJECT_LOGIN_RECORDER" }, r => console.log("recorder injected", r));
-```
-
-3. Navigate to the login URL in the active Chrome tab.
-4. Perform the complete login flow: enter credentials, submit, and wait for the authenticated page to fully settle.
-5. Stop recording and mark the session complete:
-
-```js
-chrome.runtime.sendMessage({ type: "REMOVE_LOGIN_RECORDER" }, r => console.log("recorder removed", r));
-chrome.runtime.sendMessage({ type: "CLEAR_LOGIN_RECORDING_STATE" }, r => console.log("state cleared", r));
-```
-
-Then mark the session complete on the backend:
-
-```bash
-curl -s -X POST http://localhost:8002/login-sessions/<session_id>/complete | python -m json.tool
-```
-
-> If the session capture appears empty on export, check the service worker console for `LOGIN_CLICK_EVENT` / `LOGIN_INPUT_EVENT` messages during the recording — their absence means the recorder was not injected correctly. Retry from sub-step 2.
+> If the App or Login process is not visible, confirm the backend is running (`status`) and that Step 2 succeeded.
 
 ---
 
@@ -233,8 +209,8 @@ Start
   │
   Step 2: login record "<App>" "<url>" → note session_id
   │
-  Step 3: Chrome (inject login recorder via service worker console)
-    └─ no LOGIN_CLICK_EVENTs? → recorder not injected, retry Step 3
+  Step 3: Chrome (Apps → <AppName> → Login → Start Capture → login → Stop)
+    └─ no events on export? → ensure target tab was active, retry Step 3
   │
   Step 4: login export <session_id>
     └─ writes noui-<id8>-bundle.json
@@ -281,7 +257,7 @@ Start
 | Backend not running | `.venv/bin/python cli/main.py start` |
 | `Tabby API not reachable` | Confirm Tabby is running; check `TABBY_API_HOST` in `.env` |
 | Bundle has generator errors | Re-record with slower, explicit interactions; avoid rapid clicks |
-| Used Workflow Recording instead of Login Recording Mode | Discard session; start new `login record` from Step 2 |
+| App or Login process missing in extension | Confirm Step 2 ran successfully; check backend is running |
 | Low selector confidence in review | Re-record; interact with fields one at a time with visible focus |
 | Validate timeout (60s) | Check Tabby logs; verify the keepalive URL returns HTTP 200 when authenticated |
 | Keepalive URL is redirect-only | Find a URL that loads authenticated content, not a redirect chain |

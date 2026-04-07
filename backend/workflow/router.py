@@ -7,12 +7,14 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.elicitation.models import Process, Project
 from backend.shared.models import ClickEvent, HarFile, UrlEvent
 from backend.workflow.models import WorkflowSession
 from backend.workflow.schemas import WorkflowSessionCreate, WorkflowSessionOut, WorkflowSessionUpdate
@@ -28,6 +30,20 @@ _NOUI_ROOT = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _find_or_create_project(db: AsyncSession, name: str, url: str) -> str:
+    """Find an existing project by URL hostname, or create one."""
+    hostname = urlparse(url).hostname or name
+    result = await db.execute(
+        select(Project).where(Project.base_url.contains(hostname))
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        project = Project(name=hostname, base_url=url)
+        db.add(project)
+        await db.flush()
+    return project.id
+
 
 async def _get_session(session_id: str, db: AsyncSession) -> WorkflowSession:
     result = await db.execute(select(WorkflowSession).where(WorkflowSession.id == session_id))
@@ -46,16 +62,23 @@ async def create_workflow_session(
     data: WorkflowSessionCreate,
     db: AsyncSession = Depends(get_db),
 ) -> WorkflowSession:
-    """Create a new workflow-recording session."""
+    """Create a new workflow-recording session and ensure an App + Process exist."""
+    project_id = await _find_or_create_project(db, data.name, data.start_url)
+    process = Process(project_id=project_id, name=data.name, base_url=data.start_url)
+    db.add(process)
+    await db.flush()
+
     session = WorkflowSession(
         name=data.name,
         start_url=data.start_url,
         description=data.description,
+        project_id=project_id,
+        process_id=process.id,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    logger.info("Created workflow session %s: %s", session.id, session.name)
+    logger.info("Created workflow session %s: %s (project=%s)", session.id, session.name, project_id)
     return session
 
 

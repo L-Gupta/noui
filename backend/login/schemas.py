@@ -26,6 +26,8 @@ class LoginSessionOut(BaseModel):
     login_url: str
     status: str
     notes: str
+    project_id: str | None
+    process_id: str | None
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None

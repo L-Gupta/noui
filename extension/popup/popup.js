@@ -1046,14 +1046,14 @@ function App() {
         <img src="../icons/icon48.png" alt="logo" />
         <h1>
           ${view === "projects"
-            ? "Projects"
+            ? "Apps"
             : view === "projectDetail"
-              ? `Project: ${currentProject?.name || "..."}`
+              ? `App: ${currentProject?.name || "..."}`
               : view === "test"
-                ? "Plumbing Tests"
-                : view === "options"
-                  ? "Options"
-                  : `Process: ${currentProcess?.name || "..."}`}
+                  ? "Plumbing Tests"
+                  : view === "options"
+                    ? "Options"
+                    : `Process: ${currentProcess?.name || "..."}`}
         </h1>
         ${(view === "projectDetail" || view === "processDetail") &&
         html`<${ScreenshotControls}
@@ -1254,7 +1254,7 @@ function ProjectListView({ projects, onOpen, onOpenTest, showNew, onToggleNew, o
   return html`
     <div class="content">
       <div class="flex-between" style="margin-bottom:12px">
-        <span class="section-title">Your Projects</span>
+        <span class="section-title">Your Apps</span>
         <div class="flex gap-sm">
           <button class="btn btn-secondary btn-sm" onClick=${onImportProject}>Import</button>
           <button class="btn btn-secondary btn-sm" onClick=${onOpenTest}>Test</button>
@@ -1283,7 +1283,7 @@ function ProjectListView({ projects, onOpen, onOpenTest, showNew, onToggleNew, o
       `}
 
       ${projects.length === 0
-        ? html`<div class="empty-state">No projects yet. Create one to get started.</div>`
+        ? html`<div class="empty-state">No apps yet. Create one to get started.</div>`
         : projects.map(
             (p) => editingId === p.id
               ? html`
@@ -1374,7 +1374,7 @@ function ProjectDetailView({
   onDeleteChatSession,
   onRenameChatSession,
 }) {
-  const [tab, setTab] = useState("chat");
+  const [tab, setTab] = useState("processes");
   const [procName, setProcName] = useState("");
   const [procDesc, setProcDesc] = useState("");
   const [procBaseUrl, setProcBaseUrl] = useState("");
@@ -1454,61 +1454,11 @@ function ProjectDetailView({
 
   return html`
     <div class="tabs">
-      <button class="tab ${tab === "chat" ? "active" : ""}" onClick=${() => setTab("chat")}>Chat</button>
       <button class="tab ${tab === "processes" ? "active" : ""}" onClick=${() => setTab("processes")}>Processes</button>
       <button class="tab ${tab === "captures" ? "active" : ""}" onClick=${() => setTab("captures")}>Captures</button>
       <button class="tab ${tab === "assets" ? "active" : ""}" onClick=${() => setTab("assets")}>Assets</button>
-      <button class="tab ${tab === "questions" ? "active" : ""}" onClick=${() => setTab("questions")}>Questions</button>
       <button class="tab ${tab === "timeline" ? "active" : ""}" onClick=${() => setTab("timeline")}>Timeline</button>
     </div>
-
-    ${tab === "chat" && html`
-      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-        ${editingProject ? html`
-          <div style="padding:8px 16px;background:#fffbeb;border-bottom:1px solid #fde68a">
-            <div class="form-group">
-              <label>Name</label>
-              <input class="input" value=${editProjName} onInput=${(e) => setEditProjName(e.target.value)} />
-            </div>
-            <div class="form-group">
-              <label>Description</label>
-              <input class="input" value=${editProjDesc} onInput=${(e) => setEditProjDesc(e.target.value)} />
-            </div>
-            <div class="form-group">
-              <label>Base URL</label>
-              <input class="input" value=${editProjBaseUrl} onInput=${(e) => setEditProjBaseUrl(e.target.value)} />
-            </div>
-            <div class="flex gap-sm">
-              <button class="btn btn-primary btn-sm" onClick=${saveEditProject}>Save</button>
-              <button class="btn btn-secondary btn-sm" onClick=${() => setEditingProject(false)}>Cancel</button>
-            </div>
-          </div>
-        ` : html`
-          <div class="flex-between" style="padding:4px 16px;background:#eff6ff;border-bottom:1px solid #e5e7eb">
-            <span class="text-muted" style="font-size:11px">${project?.base_url || "No base URL"}</span>
-            <div class="flex gap-sm">
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onClick=${startEditProject}>Edit</button>
-              <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onClick=${() => onExportProject(project.id)}>Export</button>
-            </div>
-          </div>
-        `}
-        <${ChatSessionBar}
-          sessions=${chatSessions}
-          activeSession=${activeChatSession}
-          onNew=${onNewChatSession}
-          onSwitch=${onSwitchChatSession}
-          onDelete=${onDeleteChatSession}
-          onRename=${onRenameChatSession}
-        />
-        <div class="content" style="flex:1;overflow-y:auto">
-          <${MessageList} messages=${messages} streamingContent=${streamingContent} />
-        </div>
-        <${MessageInput}
-          onSend=${onSendMessage}
-          disabled=${isStreaming}
-        />
-      </div>
-    `}
 
     ${tab === "processes" && html`
       <div class="content">
@@ -1608,15 +1558,6 @@ function ProjectDetailView({
       </div>
     `}
 
-    ${tab === "questions" && html`
-      <${QuestionsPanel}
-        questions=${questions}
-        onAdd=${onAddQuestion}
-        onUpdate=${onUpdateQuestion}
-        onDelete=${onDeleteQuestion}
-      />
-    `}
-
     ${tab === "timeline" && html`
       <${Timeline} events=${timelineEvents} onDownload=${onDownloadTimeline} onClear=${onClearTimeline} />
     `}
@@ -1666,7 +1607,7 @@ function ProcessDetailView({
   onDeleteChatSession,
   onRenameChatSession,
 }) {
-  const [tab, setTab] = useState("chat");
+  const [tab, setTab] = useState("captures");
   const [editingProcess, setEditingProcess] = useState(false);
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
@@ -1743,29 +1684,10 @@ function ProcessDetailView({
         </div>
       `}
       <div class="tabs">
-        <button class="tab ${tab === "chat" ? "active" : ""}" onClick=${() => setTab("chat")}>Chat</button>
         <button class="tab ${tab === "captures" ? "active" : ""}" onClick=${() => setTab("captures")}>Captures</button>
         <button class="tab ${tab === "assets" ? "active" : ""}" onClick=${() => setTab("assets")}>Assets</button>
-        <button class="tab ${tab === "questions" ? "active" : ""}" onClick=${() => setTab("questions")}>Questions</button>
         <button class="tab ${tab === "timeline" ? "active" : ""}" onClick=${() => setTab("timeline")}>Timeline</button>
       </div>
-      ${tab === "chat" && html`
-        <${ChatSessionBar}
-          sessions=${chatSessions}
-          activeSession=${activeChatSession}
-          onNew=${onNewChatSession}
-          onSwitch=${onSwitchChatSession}
-          onDelete=${onDeleteChatSession}
-          onRename=${onRenameChatSession}
-        />
-        <div class="content" style="flex:1;overflow-y:auto">
-          <${MessageList} messages=${messages} streamingContent=${streamingContent} />
-        </div>
-        <${MessageInput}
-          onSend=${onSendMessage}
-          disabled=${isStreaming}
-        />
-      `}
       ${tab === "captures" && html`
         <${CaptureSessionsList} sessions=${captureSessions} onDownloadHar=${onDownloadHar} onDelete=${onDeleteCaptureSession} />
       `}
@@ -1790,14 +1712,6 @@ function ProcessDetailView({
             onImageClick=${onImageClick}
           />
         </div>
-      `}
-      ${tab === "questions" && html`
-        <${QuestionsPanel}
-          questions=${questions}
-          onAdd=${onAddQuestion}
-          onUpdate=${onUpdateQuestion}
-          onDelete=${onDeleteQuestion}
-        />
       `}
       ${tab === "timeline" && html`
         <${Timeline} events=${timelineEvents} onDownload=${onDownloadTimeline} onClear=${onClearTimeline} />

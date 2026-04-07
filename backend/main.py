@@ -15,6 +15,8 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
+
 from backend.config import settings
 from backend.database import Base, engine
 
@@ -67,6 +69,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ensured at: %s", settings.db_url)
+
+    # Migrate existing tables — add new columns (SQLite no-op if they already exist)
+    async with engine.begin() as conn:
+        for col_def in [
+            "ALTER TABLE login_sessions ADD COLUMN project_id VARCHAR(36)",
+            "ALTER TABLE login_sessions ADD COLUMN process_id VARCHAR(36)",
+            "ALTER TABLE workflow_sessions ADD COLUMN project_id VARCHAR(36)",
+            "ALTER TABLE workflow_sessions ADD COLUMN process_id VARCHAR(36)",
+        ]:
+            try:
+                await conn.execute(text(col_def))
+            except Exception:
+                pass  # column already exists
 
     yield
 
