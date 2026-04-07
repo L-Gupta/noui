@@ -29,6 +29,8 @@ class LoginSession(Base):
     login_url: Mapped[str] = mapped_column(String(2000))
     status: Mapped[str] = mapped_column(String(20), default="idle")  # idle | recording | completed | failed
     notes: Mapped[str] = mapped_column(Text, default="")
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    process_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)

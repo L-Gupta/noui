@@ -26,6 +26,8 @@ class WorkflowSessionOut(BaseModel):
     start_url: str
     description: str
     status: str
+    project_id: str | None
+    process_id: str | None
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None

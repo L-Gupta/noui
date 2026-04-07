@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.elicitation.models import Process, Project
 from backend.login.models import LoginDraft, LoginSession
 from backend.login.schemas import LoginSessionCreate, LoginSessionOut, LoginSessionUpdate
 from backend.shared.models import ClickEvent, HarFile, UrlEvent
@@ -23,6 +25,25 @@ router = APIRouter(tags=["login-sessions"])
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _find_or_create_project(db: AsyncSession, app_name: str, url: str) -> str:
+    """Find an existing project by name or URL hostname, or create one."""
+    hostname = urlparse(url).hostname or ""
+    result = await db.execute(
+        select(Project).where(func.lower(Project.name) == app_name.lower())
+    )
+    project = result.scalar_one_or_none()
+    if not project and hostname:
+        result = await db.execute(
+            select(Project).where(Project.base_url.contains(hostname))
+        )
+        project = result.scalar_one_or_none()
+    if not project:
+        project = Project(name=app_name, base_url=url)
+        db.add(project)
+        await db.flush()
+    return project.id
+
 
 async def _get_session(session_id: str, db: AsyncSession) -> LoginSession:
     result = await db.execute(select(LoginSession).where(LoginSession.id == session_id))
@@ -41,16 +62,23 @@ async def create_login_session(
     data: LoginSessionCreate,
     db: AsyncSession = Depends(get_db),
 ) -> LoginSession:
-    """Create a new login-recording session."""
+    """Create a new login-recording session and ensure an App + Process exist."""
+    project_id = await _find_or_create_project(db, data.app_name, data.login_url)
+    process = Process(project_id=project_id, name="Login", base_url=data.login_url)
+    db.add(process)
+    await db.flush()
+
     session = LoginSession(
         app_name=data.app_name,
         login_url=data.login_url,
         notes=data.notes,
+        project_id=project_id,
+        process_id=process.id,
     )
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    logger.info("Created login session %s for %s", session.id, session.app_name)
+    logger.info("Created login session %s for %s (project=%s)", session.id, session.app_name, project_id)
     return session
 
 

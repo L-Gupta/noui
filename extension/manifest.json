@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Adopt.ai Workflow Onboarding Agent",
+  "name": "NoUI Workflow Recorder",
   "version": "0.3.2",
   "description": "Record enriched browser sessions for API specification elicitation",
   "permissions": [
