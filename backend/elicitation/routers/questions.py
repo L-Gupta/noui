@@ -95,7 +95,11 @@ async def update_question(
     if data.status and data.status != old_status:
         try:
             event_type = f"question_{data.status}"
-            summary_prefix = {"answered": "Answered", "resolved": "Resolved", "open": "Reopened"}.get(data.status, "Updated")
+            summary_prefix = {
+                "answered": "Answered",
+                "resolved": "Resolved",
+                "open": "Reopened",
+            }.get(data.status, "Updated")
             await emit_timeline_event(
                 db,
                 project_id=question.project_id,

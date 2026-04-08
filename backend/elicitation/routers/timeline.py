@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.elicitation.database import get_db
 from backend.elicitation.models import CaptureSession, Narration, TimelineEvent
-from backend.shared.models import ClickEvent
 from backend.elicitation.schemas import ClickEventOut, TimelineEventCreate, TimelineEventOut
+from backend.shared.models import ClickEvent
 
 router = APIRouter(prefix="/timeline", tags=["timeline"])
 
@@ -84,12 +84,14 @@ async def download_timeline(
         if cs.har_file_path:
             try:
                 har_data = json.loads(Path(cs.har_file_path).read_text())
-                har_logs.append({
-                    "capture_session_id": cs.id,
-                    "started_at": cs.started_at.isoformat() if cs.started_at else None,
-                    "stopped_at": cs.stopped_at.isoformat() if cs.stopped_at else None,
-                    "har": har_data,
-                })
+                har_logs.append(
+                    {
+                        "capture_session_id": cs.id,
+                        "started_at": cs.started_at.isoformat() if cs.started_at else None,
+                        "stopped_at": cs.stopped_at.isoformat() if cs.stopped_at else None,
+                        "har": har_data,
+                    }
+                )
             except Exception:
                 pass
 
@@ -97,12 +99,10 @@ async def download_timeline(
         "project_id": project_id,
         "process_id": process_id,
         "timeline_events": [
-            TimelineEventOut.model_validate(te).model_dump(mode="json")
-            for te in timeline_events
+            TimelineEventOut.model_validate(te).model_dump(mode="json") for te in timeline_events
         ],
         "interaction_events": [
-            ClickEventOut.model_validate(ce).model_dump(mode="json")
-            for ce in click_events
+            ClickEventOut.model_validate(ce).model_dump(mode="json") for ce in click_events
         ],
         "har_logs": har_logs,
     }

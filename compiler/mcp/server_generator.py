@@ -3,27 +3,29 @@
 compile_workflow(...) is the single public entry point. It:
 
 1. Converts the captured HAR into tool definitions (via har_to_tools).
-2. Writes a complete FastMCP server tree to output_dir:
+2. Detects auth signals and generates auth_plan.json.
+3. Writes a complete FastMCP server tree to output_dir:
        server.py
        tools.json
        manifest.json
        API.md
        noui_runtime/auth.py
+       auth_plan.json          (when auth is required)
        operations/<tool_name>.py   (one file per tool)
-3. Returns the manifest dict.
+4. Returns the manifest dict.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import textwrap
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from compiler.mcp.api_doc_generator import generate_api_markdown
+from compiler.mcp.auth_adapter import generate_auth_adapter
+from compiler.mcp.auth_plan import generate_auth_plan
 from compiler.mcp.har_to_tools import har_to_tool_defs
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -40,70 +42,129 @@ def compile_workflow(
     click_events: list[dict],  # noqa: ARG001 – reserved for future ranking
     url_events: list[dict],  # noqa: ARG001 – reserved for future ranking
     output_dir: str,
+    profile_slug: str = "",
+    profile_db_id: str = "",
 ) -> dict:
     """Compile a recorded workflow session into a runnable FastMCP server.
 
+    Args:
+        tabby_profile_id: Legacy profile identifier (UUID or slug). Kept for
+            backward compatibility. Prefer profile_slug for new integrations.
+        profile_slug: Tabby profile slug for runtime credential requests
+            (POST /credentials/request). Takes precedence over tabby_profile_id.
+        profile_db_id: Tabby profile DB UUID for admin operations only.
+            Never used for runtime credential requests.
+
     Returns the manifest dict (same content as manifest.json).
     """
+    from backend.config import settings as _settings
+
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+
+    # Resolve effective slug: explicit > legacy > empty
+    effective_slug = profile_slug or tabby_profile_id or ""
 
     # Derive stable identifiers
     server_id = f"{app_slug}-{session_id[:8]}"
     app_name = _slug_to_title(app_slug)
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ── 1. Convert HAR → tool_defs ────────────────────────────────────────────
     tool_defs = har_to_tool_defs(
         har,
         workflow_name=session_name,
-        tabby_profile_id=tabby_profile_id,
+        tabby_profile_id=effective_slug,
     )
 
-    # ── 2. Write noui_runtime/auth.py ─────────────────────────────────────────
+    # ── 2. Generate AuthPlan from HAR signals ─────────────────────────────────
+    # Build a minimal auth_info dict from what har_to_tool_defs already detected
+    # (avoids a second pass through detect_auth_from_har).
+    auth_headers_seen: list[str] = []
+    auth_cookies_seen: list[str] = []
+    for td in tool_defs:
+        for h in td.get("auth_headers", []):
+            if h not in auth_headers_seen:
+                auth_headers_seen.append(h)
+        for c in td.get("auth_cookies", []):
+            if c not in auth_cookies_seen:
+                auth_cookies_seen.append(c)
+
+    has_auth = bool(effective_slug or auth_headers_seen or auth_cookies_seen)
+
+    auth_plan: dict = {}
+    if has_auth:
+        auth_info = {
+            "has_auth_headers": bool(auth_headers_seen),
+            "has_cookies": bool(auth_cookies_seen),
+            "has_csrf": any("csrf" in h.lower() or "xsrf" in h.lower() for h in auth_headers_seen),
+            "auth_header_names": auth_headers_seen,
+            "csrf_header_names": [
+                h for h in auth_headers_seen if "csrf" in h.lower() or "xsrf" in h.lower()
+            ],
+            "set_cookie_names": auth_cookies_seen,
+            "auth_domains": [],
+        }
+        auth_plan = generate_auth_plan(
+            har=har,
+            auth_info=auth_info,
+            profile_slug=effective_slug,
+            profile_db_id=profile_db_id,
+            app_slug=app_slug,
+        )
+
+    # ── 3. Write noui_runtime/auth.py ─────────────────────────────────────────
     runtime_dir = out_path / "noui_runtime"
     runtime_dir.mkdir(exist_ok=True)
     (runtime_dir / "__init__.py").write_text("", encoding="utf-8")
-    (runtime_dir / "auth.py").write_text(_AUTH_PY, encoding="utf-8")
+    (runtime_dir / "auth.py").write_text(
+        generate_auth_adapter(_settings.tabby_api_host), encoding="utf-8"
+    )
 
-    # ── 3. Write operations/*.py ──────────────────────────────────────────────
+    # ── 4. Write operations/*.py ──────────────────────────────────────────────
     ops_dir = out_path / "operations"
     ops_dir.mkdir(exist_ok=True)
     (ops_dir / "__init__.py").write_text("", encoding="utf-8")
 
     op_files: list[str] = []
     for td in tool_defs:
-        op_src = _render_operation(td, tabby_profile_id=tabby_profile_id)
+        op_src = _render_operation(td, auth_plan=auth_plan)
         op_file = ops_dir / f"{td['name']}.py"
         op_file.write_text(op_src, encoding="utf-8")
         op_files.append(f"operations/{td['name']}.py")
 
-    # ── 4. Write server.py ────────────────────────────────────────────────────
+    # ── 5. Write server.py ────────────────────────────────────────────────────
     server_src = _render_server(
         app_name=app_name,
         tool_defs=tool_defs,
     )
     (out_path / "server.py").write_text(server_src, encoding="utf-8")
 
-    # ── 5. Write tools.json ───────────────────────────────────────────────────
+    # ── 6. Write tools.json ───────────────────────────────────────────────────
     (out_path / "tools.json").write_text(
         json.dumps(tool_defs, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
-    # ── 6. Write API.md ───────────────────────────────────────────────────────
+    # ── 7. Write API.md ───────────────────────────────────────────────────────
     api_md = generate_api_markdown(
         server_id=server_id,
         app_name=app_name,
         app_slug=app_slug,
         workflow_name=session_name,
         tool_defs=tool_defs,
-        tabby_profile_id=tabby_profile_id,
+        tabby_profile_id=effective_slug,
         generated_at=generated_at,
     )
     (out_path / "API.md").write_text(api_md, encoding="utf-8")
 
-    # ── 7. Build manifest ─────────────────────────────────────────────────────
+    # ── 8. Write auth_plan.json (when auth is required) ───────────────────────
+    if auth_plan:
+        (out_path / "auth_plan.json").write_text(
+            json.dumps(auth_plan, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+    # ── 9. Build and write manifest ───────────────────────────────────────────
     all_files = [
         "server.py",
         "tools.json",
@@ -111,6 +172,8 @@ def compile_workflow(
         *op_files,
         "API.md",
     ]
+    if auth_plan:
+        all_files.append("auth_plan.json")
 
     manifest_tools = [
         {
@@ -123,8 +186,10 @@ def compile_workflow(
         for td in tool_defs
     ]
 
+    auth_strategy = auth_plan.get("strategy", "") if auth_plan else ""
+
     manifest: dict = {
-        "schema_version": "1",
+        "schema_version": "2",
         "server_id": server_id,
         "app": {
             "name": app_name,
@@ -136,8 +201,14 @@ def compile_workflow(
             "workflow_session_id": session_id,
         },
         "auth": {
+            # Legacy field kept for backward compatibility
             "tabby_profile_id": tabby_profile_id or None,
-            "requires_auth": bool(tabby_profile_id),
+            "requires_auth": has_auth,
+            # v2 fields
+            "profile_slug": effective_slug or None,
+            "profile_db_id": profile_db_id or None,
+            "strategy": auth_strategy or ("tabby_credentials" if has_auth else None),
+            "auth_plan_file": "auth_plan.json" if auth_plan else None,
         },
         "runtime": {
             "type": "fastmcp",
@@ -155,7 +226,7 @@ def compile_workflow(
         "generation": {
             "generated_at": generated_at,
             "generator": "noui",
-            "generator_version": "v1",
+            "generator_version": "v2",
         },
     }
 
@@ -171,42 +242,11 @@ def compile_workflow(
 # Code renderers
 # ---------------------------------------------------------------------------
 
-_AUTH_PY = textwrap.dedent(
-    '''\
-    """NoUI runtime auth adapter — resolves live credentials from Tabby."""
-    from __future__ import annotations
-
-    import os
-
-    import httpx
-
-    TABBY_API_HOST = os.environ.get("TABBY_API_HOST", "http://localhost:8080")
-
-
-    async def get_auth_headers(profile_id: str) -> dict:
-        """Fetch live auth headers/cookies from Tabby for the given profile."""
-        url = f"{TABBY_API_HOST}/runtime/credentials/{profile_id}"
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.json()
-        headers: dict[str, str] = {}
-        for h in data.get("headers", []):
-            headers[h["name"]] = h["value"]
-        for cookie in data.get("cookies", []):
-            existing = headers.get("Cookie", "")
-            cname = cookie["name"]
-            cval = cookie["value"]
-            headers["Cookie"] = f"{existing}; {cname}={cval}".lstrip("; ")
-        return headers
-    '''
-)
-
 
 def _render_server(*, app_name: str, tool_defs: list[dict]) -> str:
     lines: list[str] = [
         f'"""Auto-generated FastMCP server: {app_name}',
-        "Generated by NoUI v1",
+        "Generated by NoUI v2",
         '"""',
         "from __future__ import annotations",
         "",
@@ -237,7 +277,8 @@ def _render_server(*, app_name: str, tool_defs: list[dict]) -> str:
         lines.append("")
         lines.append("@mcp.tool()")
         if sig_parts:
-            sig = f"async def {n}(\n    {',\n    '.join(sig_parts)},\n) -> dict:"
+            _sep = ",\n    "
+            sig = f"async def {n}(\n    {_sep.join(sig_parts)},\n) -> dict:"
         else:
             sig = f"async def {n}() -> dict:"
         lines.append(sig)
@@ -257,18 +298,38 @@ def _render_server(*, app_name: str, tool_defs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _render_operation(td: dict, *, tabby_profile_id: str) -> str:
+def _render_operation(td: dict, *, auth_plan: dict) -> str:
+    """Render a single operation module.
+
+    Auth strategy is driven by auth_plan["strategy"]:
+      - "tabby_credentials" or "static_secret_header": import and call resolve_auth()
+      - absent/empty: plain HTTP, recorded non-auth headers only
+
+    Recorded non-auth headers (Accept, Content-Type, etc.) are merged with live
+    auth headers so they are not dropped: {**_recorded, **await resolve_auth()}.
+    """
     name = td["name"]
     method = td["method"].lower()
     path_template = td["path"]
     base_url = td.get("base_url", "")
     content_type = td.get("request_content_type", "")
     params: list[dict] = td.get("params", [])
-    auth_headers: list[str] = td.get("auth_headers", [])
-    auth_cookies: list[str] = td.get("auth_cookies", [])
+    request_headers: list[dict] = td.get("request_headers", [])
     description = td.get("description", "")
 
-    needs_auth = bool(tabby_profile_id or auth_headers or auth_cookies)
+    needs_auth = bool(
+        auth_plan
+        and (
+            auth_plan.get("required_auth", {}).get("headers")
+            or auth_plan.get("required_auth", {}).get("cookies")
+            or auth_plan.get("strategy") in ("tabby_credentials", "static_secret_header")
+        )
+    )
+
+    # Recorded non-auth headers (auth headers were already stripped by har_to_tools)
+    static_headers = {
+        h["name"]: h["value"] for h in request_headers if h.get("name") and h.get("value")
+    }
 
     lines: list[str] = [
         f'"""Auto-generated operation: {name}',
@@ -278,53 +339,40 @@ def _render_operation(td: dict, *, tabby_profile_id: str) -> str:
         "",
         "from __future__ import annotations",
         "",
+        "import httpx",
+        "",
     ]
 
     if needs_auth:
-        lines += [
-            "import json",
-            "import pathlib",
-            "",
-            "import httpx",
-            "",
-            "from noui_runtime.auth import get_auth_headers",
-            "",
-            f"BASE_URL = {base_url!r}",
-            "_MANIFEST = json.loads((pathlib.Path(__file__).parent.parent / 'manifest.json').read_text())",
-            "TABBY_PROFILE_ID: str | None = _MANIFEST.get('auth', {}).get('tabby_profile_id')",
-        ]
-    else:
-        lines += [
-            "import httpx",
-            "",
-            f"BASE_URL = {base_url!r}",
-        ]
+        lines.append("from noui_runtime.auth import resolve_auth")
+        lines.append("")
 
-    lines.append("")
-    lines.append("")
+    lines += [
+        f"BASE_URL = {base_url!r}",
+        "",
+        "",
+    ]
 
     # Build function signature
     sig_parts = _py_signature(params)
     desc_safe = description.replace('"""', "'''")
 
     if sig_parts:
-        lines.append(
-            f"async def execute(\n    {',\\n    '.join(sig_parts)},\n) -> dict:"
-        )
+        _sep = ",\n    "
+        lines.append(f"async def execute(\n    {_sep.join(sig_parts)},\n) -> dict:")
     else:
         lines.append("async def execute() -> dict:")
     lines.append(f'    """{desc_safe}"""')
 
-    # Build URL
-    path_params = [p for p in params if p.get("source") == "path"]
+    # Identify param sources
     body_params = [p for p in params if p.get("source") in ("body", None, "")]
     query_params = [p for p in params if p.get("source") == "query"]
 
-    # Build URL string
+    # URL
     url_expr = f'f"{base_url}{_path_to_fstring(path_template)}"'
     lines.append(f"    url = {url_expr}")
 
-    # Build request body / query
+    # Body / query
     if body_params and method in ("post", "put", "patch"):
         body_dict = ", ".join(f"{repr(p['name'])}: {p['name']}" for p in body_params)
         if "json" in content_type:
@@ -336,23 +384,20 @@ def _render_operation(td: dict, *, tabby_profile_id: str) -> str:
         q_dict = ", ".join(f"{repr(p['name'])}: {p['name']}" for p in query_params)
         lines.append(f"    params = {{{q_dict}}}")
 
-    # Auth
+    # Header construction
     if needs_auth:
-        lines.append("    auth_hdrs = await get_auth_headers(TABBY_PROFILE_ID) if TABBY_PROFILE_ID else {}")
-        lines.append("    headers = {**auth_hdrs}")
+        if static_headers:
+            lines.append(f"    _recorded = {repr(static_headers)}")
+            lines.append("    headers = {**_recorded, **await resolve_auth()}")
+        else:
+            lines.append("    headers = await resolve_auth()")
+    elif static_headers:
+        lines.append(f"    headers = {repr(static_headers)}")
     else:
         lines.append("    headers = {}")
 
-    # Additional static headers (non-auth)
-    request_headers: list[dict] = td.get("request_headers", [])
-    for h in request_headers:
-        hname = h.get("name", "")
-        hval = h.get("value", "")
-        if hname.lower() not in ("authorization", "cookie"):
-            lines.append(f"    headers[{hname!r}] = {hval!r}")
-
     # HTTP call
-    lines.append(f"    async with httpx.AsyncClient() as client:")
+    lines.append("    async with httpx.AsyncClient() as client:")
 
     call_kwargs: list[str] = ["url", "headers=headers"]
     if query_params:
@@ -369,7 +414,7 @@ def _render_operation(td: dict, *, tabby_profile_id: str) -> str:
     lines.append("        try:")
     lines.append("            return resp.json()")
     lines.append("        except Exception:")
-    lines.append("            return {\"status\": resp.status_code, \"text\": resp.text}")
+    lines.append('            return {"status": resp.status_code, "text": resp.text}')
     lines.append("")
 
     return "\n".join(lines)
@@ -396,9 +441,13 @@ def _py_signature(params: list[dict]) -> list[str]:
 
 
 def _py_type(t: str) -> str:
-    return {"int": "int", "integer": "int", "bool": "bool", "boolean": "bool", "float": "float"}.get(
-        t.lower(), "str"
-    )
+    return {
+        "int": "int",
+        "integer": "int",
+        "bool": "bool",
+        "boolean": "bool",
+        "float": "float",
+    }.get(t.lower(), "str")
 
 
 def _py_default(t: str) -> str:

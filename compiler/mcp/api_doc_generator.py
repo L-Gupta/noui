@@ -8,8 +8,7 @@ Never reads files or calls external services.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 # ---------------------------------------------------------------------------
 # Sensitivity filters
@@ -65,7 +64,7 @@ def generate_api_markdown(
 ) -> str:
     """Return the full API.md content for a generated MCP server."""
     if generated_at is None:
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     lines: list[str] = []
 
@@ -78,8 +77,7 @@ def generate_api_markdown(
     lines.append(">")
     lines.append("> Do not store secrets in this file.")
     lines.append(
-        f"> Regenerate after changing tools:"
-        f" `.venv/bin/python cli/main.py mcp docs {server_id}`"
+        f"> Regenerate after changing tools: `.venv/bin/python cli/main.py mcp docs {server_id}`"
     )
     lines.append("")
 
@@ -226,9 +224,7 @@ def _format_tool_section(td: dict, tabby_profile_id: str) -> list[str]:
 
     # Static headers: exclude auth/cookie/sensitive ones
     static_headers = [
-        h["name"]
-        for h in request_headers
-        if h.get("name", "").lower() not in _AUTH_HEADER_NAMES
+        h["name"] for h in request_headers if h.get("name", "").lower() not in _AUTH_HEADER_NAMES
     ]
     if static_headers:
         hnames = ", ".join(f"`{h}`" for h in static_headers)

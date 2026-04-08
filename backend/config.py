@@ -18,11 +18,13 @@ class Settings:
     port: int = 8002
     debug: bool = True
 
-    cors_origins: list[str] = field(default_factory=lambda: [
-        "chrome-extension://*",
-        "http://localhost:3000",
-        "http://localhost:8002",
-    ])
+    cors_origins: list[str] = field(
+        default_factory=lambda: [
+            "chrome-extension://*",
+            "http://localhost:3000",
+            "http://localhost:8002",
+        ]
+    )
 
     data_dir: str = ""
     db_url: str = ""

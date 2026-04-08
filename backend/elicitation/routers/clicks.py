@@ -5,9 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.elicitation.database import get_db
-from backend.shared.models import ClickEvent
 from backend.elicitation.schemas import ClickEventCreate, ClickEventOut
 from backend.elicitation.timeline_utils import emit_timeline_event
+from backend.shared.models import ClickEvent
 
 router = APIRouter(prefix="/clicks", tags=["clicks"])
 
@@ -100,5 +100,6 @@ async def get_click(click_id: str, db: AsyncSession = Depends(get_db)):
     click = result.scalar_one_or_none()
     if not click:
         from fastapi import HTTPException
+
         raise HTTPException(404, "Click event not found")
     return click

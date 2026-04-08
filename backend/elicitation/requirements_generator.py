@@ -76,7 +76,8 @@ def generate_requirements_md(
 
     # Captured Parameters
     form_inputs = [
-        c for c in click_events
+        c
+        for c in click_events
         if c.get("event_type") in ("input", "change") and c.get("field_name")
     ]
     if form_inputs:
@@ -96,7 +97,9 @@ def generate_requirements_md(
 
     # Open Questions
     open_qs = [q for q in questions if q.get("status") != "resolved"]
-    answered_qs = [q for q in questions if q.get("status") in ("answered", "resolved") and q.get("answer")]
+    answered_qs = [
+        q for q in questions if q.get("status") in ("answered", "resolved") and q.get("answer")
+    ]
     if open_qs or answered_qs:
         sections.append("## Questions\n")
         if answered_qs:
@@ -112,8 +115,7 @@ def generate_requirements_md(
 
     # Notes from Conversation
     human_messages = [
-        m for m in messages
-        if m.get("role") == "human" and _looks_like_intent(m.get("content", ""))
+        m for m in messages if m.get("role") == "human" and _looks_like_intent(m.get("content", ""))
     ]
     if human_messages:
         sections.append("## Notes from Conversation\n")
@@ -131,6 +133,7 @@ def generate_requirements_md(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _extract_workflow_steps(timeline_events: list[dict]) -> list[str]:
     """Extract a human-readable workflow step list from timeline events."""
@@ -153,7 +156,7 @@ def _extract_workflow_steps(timeline_events: list[dict]) -> list[str]:
     return steps
 
 
-def _format_timestamp(ts) -> str:
+def _format_timestamp(ts: object) -> str:
     """Format a timestamp for display."""
     if not ts:
         return "?"
@@ -177,6 +180,17 @@ def _looks_like_intent(content: str) -> bool:
     if lower in ("hi", "hello", "thanks", "ok", "yes", "no", "sure"):
         return False
     # Intent signals
-    intent_words = ("want", "need", "should", "create", "add", "update",
-                    "delete", "automate", "workflow", "process", "api")
+    intent_words = (
+        "want",
+        "need",
+        "should",
+        "create",
+        "add",
+        "update",
+        "delete",
+        "automate",
+        "workflow",
+        "process",
+        "api",
+    )
     return any(w in lower for w in intent_words)

@@ -12,10 +12,8 @@ Run standalone: python -m app.mcp_server
 Or mount as a sub-application within FastAPI.
 """
 
-import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
 from sqlalchemy import select
@@ -24,7 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.elicitation.browser_bridge import execute_command as _browser_exec
 from backend.elicitation.config import settings
 from backend.elicitation.database import async_session
-from backend.elicitation.models import CaptureSession, Message, Narration, Process, Project, Screenshot, TimelineEvent
+from backend.elicitation.models import (
+    CaptureSession,
+    Message,
+    Process,
+    Project,
+    Screenshot,
+    TimelineEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +59,7 @@ async def get_project_context(project_id: str) -> str:
             return json.dumps({"error": f"Project {project_id} not found"})
 
         # Get processes
-        result = await db.execute(
-            select(Process).where(Process.project_id == project_id)
-        )
+        result = await db.execute(select(Process).where(Process.project_id == project_id))
         processes = result.scalars().all()
 
         # Get recent messages
@@ -68,33 +71,36 @@ async def get_project_context(project_id: str) -> str:
         )
         messages = list(reversed(result.scalars().all()))
 
-        return json.dumps({
-            "project": {
-                "id": project.id,
-                "name": project.name,
-                "description": project.description,
-                "status": project.status,
+        return json.dumps(
+            {
+                "project": {
+                    "id": project.id,
+                    "name": project.name,
+                    "description": project.description,
+                    "status": project.status,
+                },
+                "processes": [
+                    {
+                        "id": p.id,
+                        "name": p.name,
+                        "description": p.description,
+                        "status": p.status,
+                    }
+                    for p in processes
+                ],
+                "recent_messages": [
+                    {
+                        "id": m.id,
+                        "role": m.role,
+                        "content": m.content,
+                        "content_type": m.content_type,
+                        "timestamp": m.timestamp.isoformat(),
+                    }
+                    for m in messages
+                ],
             },
-            "processes": [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "description": p.description,
-                    "status": p.status,
-                }
-                for p in processes
-            ],
-            "recent_messages": [
-                {
-                    "id": m.id,
-                    "role": m.role,
-                    "content": m.content,
-                    "content_type": m.content_type,
-                    "timestamp": m.timestamp.isoformat(),
-                }
-                for m in messages
-            ],
-        }, indent=2)
+            indent=2,
+        )
 
 
 @mcp.tool()
@@ -125,7 +131,7 @@ async def get_capture_sessions(process_id: str) -> str:
             }
             if s.har_file_path:
                 try:
-                    with open(s.har_file_path, "r") as f:
+                    with open(s.har_file_path) as f:
                         entry["har_data"] = json.load(f)
                 except (FileNotFoundError, json.JSONDecodeError) as e:
                     entry["har_data"] = f"Error reading HAR: {e}"
@@ -149,18 +155,21 @@ async def get_screenshots(project_id: str) -> str:
         )
         screenshots = result.scalars().all()
 
-        return json.dumps({
-            "screenshots": [
-                {
-                    "id": s.id,
-                    "url": s.url,
-                    "file_path": s.file_path,
-                    "timestamp": s.timestamp.isoformat(),
-                    "image_url": f"http://localhost:{settings.port}/screenshots/{s.id}/image",
-                }
-                for s in screenshots
-            ],
-        }, indent=2)
+        return json.dumps(
+            {
+                "screenshots": [
+                    {
+                        "id": s.id,
+                        "url": s.url,
+                        "file_path": s.file_path,
+                        "timestamp": s.timestamp.isoformat(),
+                        "image_url": f"http://localhost:{settings.port}/screenshots/{s.id}/image",
+                    }
+                    for s in screenshots
+                ],
+            },
+            indent=2,
+        )
 
 
 @mcp.tool()
@@ -180,18 +189,21 @@ async def get_conversation_history(project_id: str, limit: int = 50) -> str:
         )
         messages = list(reversed(result.scalars().all()))
 
-        return json.dumps({
-            "messages": [
-                {
-                    "id": m.id,
-                    "role": m.role,
-                    "content": m.content,
-                    "content_type": m.content_type,
-                    "timestamp": m.timestamp.isoformat(),
-                }
-                for m in messages
-            ],
-        }, indent=2)
+        return json.dumps(
+            {
+                "messages": [
+                    {
+                        "id": m.id,
+                        "role": m.role,
+                        "content": m.content,
+                        "content_type": m.content_type,
+                        "timestamp": m.timestamp.isoformat(),
+                    }
+                    for m in messages
+                ],
+            },
+            indent=2,
+        )
 
 
 @mcp.tool()
@@ -218,17 +230,23 @@ async def get_api_spec_draft(project_id: str) -> str:
         spec_msg = result.scalar_one_or_none()
 
         if spec_msg:
-            return json.dumps({
-                "has_draft": True,
-                "message_id": spec_msg.id,
-                "content": spec_msg.content,
-                "timestamp": spec_msg.timestamp.isoformat(),
-            }, indent=2)
+            return json.dumps(
+                {
+                    "has_draft": True,
+                    "message_id": spec_msg.id,
+                    "content": spec_msg.content,
+                    "timestamp": spec_msg.timestamp.isoformat(),
+                },
+                indent=2,
+            )
 
-        return json.dumps({
-            "has_draft": False,
-            "message": "No API specification draft found. Start a conversation to generate one.",
-        }, indent=2)
+        return json.dumps(
+            {
+                "has_draft": False,
+                "message": "No API specification draft found. Start a conversation to generate one.",
+            },
+            indent=2,
+        )
 
 
 @mcp.tool()
@@ -261,12 +279,15 @@ async def add_message(project_id: str, content: str, role: str = "human") -> str
         await db.commit()
         await db.refresh(msg)
 
-        return json.dumps({
-            "id": msg.id,
-            "role": msg.role,
-            "content": msg.content,
-            "timestamp": msg.timestamp.isoformat(),
-        }, indent=2)
+        return json.dumps(
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.timestamp.isoformat(),
+            },
+            indent=2,
+        )
 
 
 @mcp.tool()
@@ -282,29 +303,29 @@ async def get_timeline(project_id: str, process_id: str | None = None, limit: in
         limit: Maximum number of events to return (default 100)
     """
     async with async_session() as db:
-        stmt = (
-            select(TimelineEvent)
-            .where(TimelineEvent.project_id == project_id)
-        )
+        stmt = select(TimelineEvent).where(TimelineEvent.project_id == project_id)
         if process_id:
             stmt = stmt.where(TimelineEvent.process_id == process_id)
         stmt = stmt.order_by(TimelineEvent.timestamp.asc()).limit(limit)
         result = await db.execute(stmt)
         events = result.scalars().all()
 
-        return json.dumps({
-            "timeline": [
-                {
-                    "id": e.id,
-                    "event_type": e.event_type,
-                    "summary": e.summary,
-                    "source_id": e.source_id,
-                    "timestamp": e.timestamp.isoformat(),
-                    "metadata": json.loads(e.metadata_json) if e.metadata_json else {},
-                }
-                for e in events
-            ],
-        }, indent=2)
+        return json.dumps(
+            {
+                "timeline": [
+                    {
+                        "id": e.id,
+                        "event_type": e.event_type,
+                        "summary": e.summary,
+                        "source_id": e.source_id,
+                        "timestamp": e.timestamp.isoformat(),
+                        "metadata": json.loads(e.metadata_json) if e.metadata_json else {},
+                    }
+                    for e in events
+                ],
+            },
+            indent=2,
+        )
 
 
 # ── Browser control tools (via command queue → Chrome extension) ──────────
@@ -342,11 +363,14 @@ async def browser_query_elements(
         max_results: Maximum number of elements to return (default 20, max 100)
     """
     try:
-        result = await _browser_exec("query_elements", {
-            "selector": selector,
-            "includeText": include_text,
-            "maxResults": min(max_results, 100),
-        })
+        result = await _browser_exec(
+            "query_elements",
+            {
+                "selector": selector,
+                "includeText": include_text,
+                "maxResults": min(max_results, 100),
+            },
+        )
         return json.dumps(result, indent=2)
     except TimeoutError as e:
         return json.dumps({"error": str(e)})
@@ -376,11 +400,14 @@ async def browser_type_text(selector: str, text: str, clear_first: bool = True) 
         clear_first: Whether to clear the existing value first (default True)
     """
     try:
-        result = await _browser_exec("type_text", {
-            "selector": selector,
-            "text": text,
-            "clearFirst": clear_first,
-        })
+        result = await _browser_exec(
+            "type_text",
+            {
+                "selector": selector,
+                "text": text,
+                "clearFirst": clear_first,
+            },
+        )
         return json.dumps(result, indent=2)
     except TimeoutError as e:
         return json.dumps({"error": str(e)})
@@ -433,6 +460,7 @@ async def browser_take_screenshot() -> str:
 
 # ── ABCD Export tools ────────────────────────────────────────────────────────
 
+
 @mcp.tool()
 async def generate_wdl_draft(process_id: str) -> str:
     """Generate a WDL (Workflow Definition Language) draft from captured data.
@@ -445,6 +473,7 @@ async def generate_wdl_draft(process_id: str) -> str:
         process_id: UUID of the process with captured data.
     """
     import httpx
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -453,13 +482,16 @@ async def generate_wdl_draft(process_id: str) -> str:
             )
             resp.raise_for_status()
             data = resp.json()
-            return json.dumps({
-                "wdl": data.get("wdl", {}),
-                "auth": data.get("auth", {}),
-                "api_groups": data.get("api_groups", []),
-                "test_cases": data.get("test_cases", []),
-                "stats": data.get("stats", {}),
-            }, indent=2)
+            return json.dumps(
+                {
+                    "wdl": data.get("wdl", {}),
+                    "auth": data.get("auth", {}),
+                    "api_groups": data.get("api_groups", []),
+                    "test_cases": data.get("test_cases", []),
+                    "stats": data.get("stats", {}),
+                },
+                indent=2,
+            )
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -475,6 +507,7 @@ async def detect_auth_patterns_tool(process_id: str) -> str:
         process_id: UUID of the process with HAR data.
     """
     import httpx
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -500,6 +533,7 @@ async def generate_test_cases_tool(process_id: str) -> str:
         process_id: UUID of the process with captured data.
     """
     import httpx
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -527,7 +561,12 @@ async def export_abcd_workspace(process_id: str) -> str:
     Args:
         process_id: UUID of the process to export.
     """
+    from pathlib import Path
+
     import httpx
+
+    from backend.elicitation.config import settings
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -537,19 +576,20 @@ async def export_abcd_workspace(process_id: str) -> str:
             resp.raise_for_status()
 
             # Save to data dir
-            from backend.elicitation.config import settings
-            from pathlib import Path
             export_dir = Path(settings.data_dir) / "abcd_exports"
             export_dir.mkdir(parents=True, exist_ok=True)
             export_path = export_dir / f"abcd-{process_id}.zip"
             export_path.write_bytes(resp.content)
 
-            return json.dumps({
-                "status": "success",
-                "file_path": str(export_path),
-                "size_bytes": len(resp.content),
-                "download_url": f"/abcd/processes/{process_id}/export",
-            }, indent=2)
+            return json.dumps(
+                {
+                    "status": "success",
+                    "file_path": str(export_path),
+                    "size_bytes": len(resp.content),
+                    "download_url": f"/abcd/processes/{process_id}/export",
+                },
+                indent=2,
+            )
     except Exception as e:
         return json.dumps({"error": str(e)})
 

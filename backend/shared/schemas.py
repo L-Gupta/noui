@@ -6,8 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-
 # ── ClickEvent ───────────────────────────────────────────────────────────────
+
 
 class ClickEventCreate(BaseModel):
     # Accept both the NoUI field name (session_id) and the abcd extension alias
@@ -22,6 +22,7 @@ class ClickEventCreate(BaseModel):
             if not data.get("session_id") and data.get("capture_session_id"):
                 data["session_id"] = data["capture_session_id"]
         return data
+
     event_type: str = "click"  # click | input | change | submit
     url: str = ""
     tag_name: str
@@ -76,6 +77,7 @@ class ClickEventOut(BaseModel):
 
 # ── UrlEvent ─────────────────────────────────────────────────────────────────
 
+
 class UrlEventCreate(BaseModel):
     session_id: str | None = None
     capture_session_id: str | None = None  # extension compat alias for session_id
@@ -104,6 +106,7 @@ class UrlEventOut(BaseModel):
 
 
 # ── HarFile ──────────────────────────────────────────────────────────────────
+
 
 class HarFileOut(BaseModel):
     id: str

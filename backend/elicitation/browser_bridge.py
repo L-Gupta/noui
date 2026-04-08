@@ -8,7 +8,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class BrowserCommand:
     id: str
     command_type: str
     params: dict
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     event: asyncio.Event = field(default_factory=asyncio.Event)
     result: dict | None = None
 
@@ -77,11 +77,12 @@ async def execute_command(command_type: str, params: dict) -> dict:
     cmd = create_command(command_type, params)
     try:
         await asyncio.wait_for(cmd.event.wait(), timeout=COMMAND_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _pending.pop(cmd.id, None)
         _active.pop(cmd.id, None)
         raise TimeoutError(
             f"Browser command '{command_type}' timed out after {COMMAND_TIMEOUT_SECONDS}s. "
             "Is the Chrome extension running and connected?"
-        )
+        ) from None
+    assert cmd.result is not None
     return cmd.result

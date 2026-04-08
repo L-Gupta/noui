@@ -8,22 +8,36 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
-from urllib.parse import urlparse, parse_qs
-
+from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 # Minimum length for a value to be considered as a dependency candidate
 _MIN_DEP_VALUE_LEN = 4
 
 # Values to never treat as dependencies (too generic)
-_IGNORE_VALUES = frozenset({
-    "true", "false", "null", "ok", "error", "success", "failed",
-    "application/json", "text/plain", "utf-8",
-    "GET", "POST", "PUT", "PATCH", "DELETE",
-})
+_IGNORE_VALUES = frozenset(
+    {
+        "true",
+        "false",
+        "null",
+        "ok",
+        "error",
+        "success",
+        "failed",
+        "application/json",
+        "text/plain",
+        "utf-8",
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+    }
+)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+
 
 def generate_wdl(
     har_entries: list[dict],
@@ -75,7 +89,7 @@ def generate_wdl(
     steps = []
 
     # Pre-index: which entries source dependencies, and which consume them
-    dep_sources: dict[int, list[dict]] = {}   # entry_idx -> deps it produces
+    dep_sources: dict[int, list[dict]] = {}  # entry_idx -> deps it produces
     dep_consumers: dict[int, list[dict]] = {}  # entry_idx -> deps it consumes
     for dep in dependencies:
         dep_sources.setdefault(dep["from_entry"], []).append(dep)
@@ -92,7 +106,11 @@ def generate_wdl(
 
         # Build REST step
         rest_step = _build_rest_step(
-            entry, base_url, form_values, detected_params, step_idx,
+            entry,
+            base_url,
+            form_values,
+            detected_params,
+            step_idx,
             dep_substitutions=dep_substitutions,
         )
 
@@ -116,10 +134,12 @@ def generate_wdl(
     # Phase 5: Add OUTPUT_TEXT step if we have narrations describing the result
     final_narration = _find_final_narration(narrations)
     if final_narration:
-        steps.append({
-            "operation": "OUTPUT_TEXT",
-            "config": {"template": final_narration},
-        })
+        steps.append(
+            {
+                "operation": "OUTPUT_TEXT",
+                "config": {"template": final_narration},
+            }
+        )
 
     # Always add base_url to detected_params
     if base_url:
@@ -142,9 +162,11 @@ def generate_wdl(
 
 # ── Base URL detection ────────────────────────────────────────────────────────
 
+
 def _detect_base_url(har_entries: list[dict]) -> str:
     """Detect the most common base URL from HAR entries."""
     from collections import Counter
+
     bases: Counter = Counter()
     for entry in har_entries:
         url = entry.get("request", {}).get("url", "")
@@ -160,6 +182,7 @@ def _detect_base_url(har_entries: list[dict]) -> str:
 
 # ── Dependency detection ─────────────────────────────────────────────────────
 
+
 def detect_dependencies(har_entries: list[dict]) -> list[dict]:
     """Find data dependencies between sequential HAR entries.
 
@@ -173,7 +196,7 @@ def detect_dependencies(har_entries: list[dict]) -> list[dict]:
     if len(har_entries) < 2:
         return []
 
-    deps = []
+    deps: list[dict] = []
 
     for i, entry in enumerate(har_entries):
         resp_body = _parse_response_body(entry)
@@ -204,23 +227,23 @@ def detect_dependencies(har_entries: list[dict]) -> list[dict]:
                     jq_expr = _path_to_jq(field_path)
 
                     # Avoid duplicates
-                    if not any(
-                        d["from_entry"] == i and d["variable"] == var_name
-                        for d in deps
-                    ):
-                        deps.append({
-                            "from_entry": i,
-                            "to_entry": j,
-                            "field": field_path,
-                            "jq_expression": jq_expr,
-                            "variable": var_name,
-                            "value": str_val,
-                        })
+                    if not any(d["from_entry"] == i and d["variable"] == var_name for d in deps):
+                        deps.append(
+                            {
+                                "from_entry": i,
+                                "to_entry": j,
+                                "field": field_path,
+                                "jq_expression": jq_expr,
+                                "variable": var_name,
+                                "value": str_val,
+                            }
+                        )
 
     return deps
 
 
 # ── REST step builder ────────────────────────────────────────────────────────
+
 
 def _build_rest_step(
     entry: dict,
@@ -239,7 +262,7 @@ def _build_rest_step(
     # Parameterize URL
     parameterized_url = url
     if base_url and url.startswith(base_url):
-        parameterized_url = "{{base_url}}" + url[len(base_url):]
+        parameterized_url = "{{base_url}}" + url[len(base_url) :]
     elif base_url:
         # Try matching just the scheme+host portion
         parsed = urlparse(base_url)
@@ -250,9 +273,7 @@ def _build_rest_step(
                 parameterized_url += "?" + url_parsed.query
 
     # Parameterize form values in URL
-    parameterized_url = _parameterize_string(
-        parameterized_url, form_values, detected_params
-    )
+    parameterized_url = _parameterize_string(parameterized_url, form_values, detected_params)
 
     # Parameterize dependency values in URL (e.g. replace "123" with "{{customer_id}}")
     dep_substitutions = dep_substitutions or {}
@@ -301,9 +322,7 @@ def _build_rest_step(
             body_json = _parameterize_dict(body_json, form_values, detected_params)
             step["config"]["body"] = body_json
         except (json.JSONDecodeError, TypeError):
-            step["config"]["body"] = _parameterize_string(
-                body_text, form_values, detected_params
-            )
+            step["config"]["body"] = _parameterize_string(body_text, form_values, detected_params)
 
     if status:
         step["config"]["expected_status"] = status
@@ -312,6 +331,7 @@ def _build_rest_step(
 
 
 # ── Parameterization helpers ─────────────────────────────────────────────────
+
 
 def _collect_form_values(click_events: list[dict]) -> dict[str, str]:
     """Collect field_name -> value from form input events."""
@@ -383,6 +403,7 @@ def _to_var_name(field_name: str) -> str:
 
 # ── Narration matching ───────────────────────────────────────────────────────
 
+
 def _find_matching_narration(entry: dict, narrations: list[dict]) -> str:
     """Find a narration that's temporally close to this HAR entry."""
     entry_time = entry.get("startedDateTime", "")
@@ -435,7 +456,8 @@ def _find_final_narration(narrations: list[dict]) -> str:
 
 # ── Timestamp normalization ───────────────────────────────────────────────────
 
-def _parse_to_naive_utc(ts) -> datetime | None:
+
+def _parse_to_naive_utc(ts: object) -> datetime | None:
     """Parse a timestamp (string or datetime) to a naive UTC datetime.
 
     This avoids offset-naive vs offset-aware comparison errors.
@@ -450,12 +472,13 @@ def _parse_to_naive_utc(ts) -> datetime | None:
 
     # Convert to UTC and strip tzinfo
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
 
     return dt
 
 
 # ── Response/request parsing ─────────────────────────────────────────────────
+
 
 def _parse_response_body(entry: dict) -> dict | list | None:
     """Parse the response body from a HAR entry as JSON."""
@@ -470,7 +493,9 @@ def _parse_response_body(entry: dict) -> dict | list | None:
 
 
 def _extract_scalar_values(
-    obj: dict | list, prefix: str, max_depth: int = 3,
+    obj: dict | list,
+    prefix: str,
+    max_depth: int = 3,
 ) -> list[tuple[str, str | int | float]]:
     """Recursively extract (json_path, value) pairs for scalar values."""
     if max_depth <= 0:
@@ -526,14 +551,31 @@ def _path_to_variable_name(path: str) -> str:
 
 # ── Header extraction ────────────────────────────────────────────────────────
 
-_SKIP_HEADERS = frozenset({
-    "host", "connection", "user-agent", "accept-encoding",
-    "accept-language", "cache-control", "pragma", "origin",
-    "referer", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site",
-    "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
-    "dnt", "upgrade-insecure-requests", "if-none-match",
-    "if-modified-since", "cookie", "content-length",
-})
+_SKIP_HEADERS = frozenset(
+    {
+        "host",
+        "connection",
+        "user-agent",
+        "accept-encoding",
+        "accept-language",
+        "cache-control",
+        "pragma",
+        "origin",
+        "referer",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "dnt",
+        "upgrade-insecure-requests",
+        "if-none-match",
+        "if-modified-since",
+        "cookie",
+        "content-length",
+    }
+)
 
 
 def _extract_api_headers(headers: list[dict]) -> dict[str, str]:
@@ -551,6 +593,7 @@ def _extract_api_headers(headers: list[dict]) -> dict[str, str]:
 
 # ── Dependency formatting ────────────────────────────────────────────────────
 
+
 def _format_dependencies(
     dependencies: list[dict],
     har_entries: list[dict],
@@ -562,9 +605,11 @@ def _format_dependencies(
     # We return the simplified from_step/to_step/via format
     result = []
     for dep in dependencies:
-        result.append({
-            "from_step": dep["from_entry"],
-            "to_step": dep["to_entry"],
-            "via": dep["variable"],
-        })
+        result.append(
+            {
+                "from_step": dep["from_entry"],
+                "to_step": dep["to_entry"],
+                "via": dep["variable"],
+            }
+        )
     return result

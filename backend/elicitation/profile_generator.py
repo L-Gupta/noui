@@ -148,8 +148,7 @@ def _build_profiles_map(
 
         # Filter HAR entries for this group
         group_entries = [
-            e for e in har_entries
-            if e.get("request", {}).get("url", "").startswith(group_base)
+            e for e in har_entries if e.get("request", {}).get("url", "").startswith(group_base)
         ]
 
         # Detect auth specific to this API group

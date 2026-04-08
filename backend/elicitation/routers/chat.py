@@ -3,7 +3,7 @@
 import json
 import logging
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,10 +12,17 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from backend.elicitation.database import get_db
-from backend.elicitation.models import ChatSession, Message, Process, Project, Screenshot, TimelineEvent
-from backend.elicitation.schemas import ChatSessionCreate, ChatSessionOut, ChatSessionUpdate
 from backend.elicitation import claude_client
+from backend.elicitation.database import get_db
+from backend.elicitation.models import (
+    ChatSession,
+    Message,
+    Process,
+    Project,
+    Screenshot,
+    TimelineEvent,
+)
+from backend.elicitation.schemas import ChatSessionCreate, ChatSessionOut, ChatSessionUpdate
 from backend.elicitation.timeline_utils import emit_timeline_event
 
 logger = logging.getLogger(__name__)
@@ -80,15 +87,11 @@ async def _get_context_block(db: AsyncSession, project_id: str) -> str:
     project_dict = {"name": project.name, "description": project.description}
 
     # Get processes
-    result = await db.execute(
-        select(Process).where(Process.project_id == project_id)
-    )
+    result = await db.execute(select(Process).where(Process.project_id == project_id))
     processes = [{"name": p.name} for p in result.scalars().all()]
 
     # Get screenshot count
-    result = await db.execute(
-        select(Screenshot).where(Screenshot.project_id == project_id)
-    )
+    result = await db.execute(select(Screenshot).where(Screenshot.project_id == project_id))
     screenshots = [{"id": s.id} for s in result.scalars().all()]
 
     return claude_client.build_context_block(
@@ -111,9 +114,7 @@ async def _execute_tool(project_id: str, tool_name: str, tool_input: dict) -> st
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
-async def _tool_query_timeline(
-    db: AsyncSession, project_id: str, params: dict
-) -> str:
+async def _tool_query_timeline(db: AsyncSession, project_id: str, params: dict) -> str:
     """Execute the query_timeline tool."""
     stmt = select(TimelineEvent).where(TimelineEvent.project_id == project_id)
 
@@ -137,25 +138,25 @@ async def _tool_query_timeline(
     result = await db.execute(stmt)
     events = result.scalars().all()
 
-    return json.dumps({
-        "total_returned": len(events),
-        "events": [
-            {
-                "id": e.id,
-                "event_type": e.event_type,
-                "summary": e.summary,
-                "timestamp": e.timestamp.isoformat(),
-                "process_id": e.process_id,
-                "metadata": json.loads(e.metadata_json) if e.metadata_json else {},
-            }
-            for e in events
-        ],
-    })
+    return json.dumps(
+        {
+            "total_returned": len(events),
+            "events": [
+                {
+                    "id": e.id,
+                    "event_type": e.event_type,
+                    "summary": e.summary,
+                    "timestamp": e.timestamp.isoformat(),
+                    "process_id": e.process_id,
+                    "metadata": json.loads(e.metadata_json) if e.metadata_json else {},
+                }
+                for e in events
+            ],
+        }
+    )
 
 
-async def _tool_get_capture_summary(
-    db: AsyncSession, project_id: str, params: dict
-) -> str:
+async def _tool_get_capture_summary(db: AsyncSession, project_id: str, params: dict) -> str:
     """Execute the get_capture_summary tool."""
     stmt = select(TimelineEvent).where(TimelineEvent.project_id == project_id)
 
@@ -167,14 +168,16 @@ async def _tool_get_capture_summary(
     events = result.scalars().all()
 
     if not events:
-        return json.dumps({
-            "message": "No timeline data captured yet for this project.",
-            "total_events": 0,
-            "event_counts": {},
-            "unique_urls": [],
-            "api_endpoints": [],
-            "time_range": None,
-        })
+        return json.dumps(
+            {
+                "message": "No timeline data captured yet for this project.",
+                "total_events": 0,
+                "event_counts": {},
+                "unique_urls": [],
+                "api_endpoints": [],
+                "time_range": None,
+            }
+        )
 
     type_counts = Counter(e.event_type for e in events)
 
@@ -199,16 +202,18 @@ async def _tool_get_capture_summary(
 
     timestamps = [e.timestamp for e in events]
 
-    return json.dumps({
-        "total_events": len(events),
-        "event_counts": dict(type_counts),
-        "unique_urls": sorted(unique_urls)[:50],
-        "api_endpoints": sorted(api_endpoints)[:50],
-        "time_range": {
-            "earliest": min(timestamps).isoformat(),
-            "latest": max(timestamps).isoformat(),
-        },
-    })
+    return json.dumps(
+        {
+            "total_events": len(events),
+            "event_counts": dict(type_counts),
+            "unique_urls": sorted(unique_urls)[:50],
+            "api_endpoints": sorted(api_endpoints)[:50],
+            "time_range": {
+                "earliest": min(timestamps).isoformat(),
+                "latest": max(timestamps).isoformat(),
+            },
+        }
+    )
 
 
 @router.post("")
@@ -273,14 +278,16 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         # Send the stored human message event
         yield {
             "event": "human_message",
-            "data": json.dumps({
-                "id": human_msg.id,
-                "role": "human",
-                "content": human_msg.content,
-                "content_type": human_msg.content_type,
-                "url": human_msg.url,
-                "timestamp": human_msg.timestamp.isoformat(),
-            }),
+            "data": json.dumps(
+                {
+                    "id": human_msg.id,
+                    "role": "human",
+                    "content": human_msg.content,
+                    "content_type": human_msg.content_type,
+                    "url": human_msg.url,
+                    "timestamp": human_msg.timestamp.isoformat(),
+                }
+            ),
         }
 
         # Stream Claude response with tool use support
@@ -303,6 +310,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         if agent_content:
             # Need a new session since the generator runs outside the original request
             from backend.elicitation.database import async_session
+
             async with async_session() as session:
                 agent_msg = Message(
                     project_id=req.project_id,
@@ -333,13 +341,15 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
                 yield {
                     "event": "agent_message",
-                    "data": json.dumps({
-                        "id": agent_msg.id,
-                        "role": "agent",
-                        "content": agent_msg.content,
-                        "content_type": "text",
-                        "timestamp": agent_msg.timestamp.isoformat(),
-                    }),
+                    "data": json.dumps(
+                        {
+                            "id": agent_msg.id,
+                            "role": "agent",
+                            "content": agent_msg.content,
+                            "content_type": "text",
+                            "timestamp": agent_msg.timestamp.isoformat(),
+                        }
+                    ),
                 }
 
         yield {"event": "done", "data": "{}"}
@@ -368,10 +378,9 @@ async def get_chat_history(
 
 # ── Chat Session CRUD ──────────────────────────────────────────────────────
 
+
 @router.post("/sessions", response_model=ChatSessionOut, status_code=201)
-async def create_chat_session(
-    data: ChatSessionCreate, db: AsyncSession = Depends(get_db)
-):
+async def create_chat_session(data: ChatSessionCreate, db: AsyncSession = Depends(get_db)):
     session = ChatSession(
         project_id=data.project_id,
         process_id=data.process_id,
@@ -411,9 +420,7 @@ async def list_chat_sessions(
 
 
 @router.delete("/sessions/{session_id}", status_code=204)
-async def delete_chat_session(
-    session_id: str, db: AsyncSession = Depends(get_db)
-):
+async def delete_chat_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = await db.get(ChatSession, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")

@@ -1,7 +1,7 @@
 """Routes for capture sessions (replaces recordings)."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -12,13 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.elicitation.config import settings
 from backend.elicitation.database import get_db
 from backend.elicitation.models import CaptureSession, Process
-from backend.elicitation.schemas import CaptureSessionCreate, CaptureSessionOut, CaptureSessionUpdate
+from backend.elicitation.schemas import (
+    CaptureSessionCreate,
+    CaptureSessionOut,
+    CaptureSessionUpdate,
+)
 from backend.elicitation.timeline_utils import emit_timeline_event
 
 router = APIRouter(tags=["capture-sessions"])
 
 
-@router.post("/processes/{process_id}/capture-sessions", response_model=CaptureSessionOut, status_code=201)
+@router.post(
+    "/processes/{process_id}/capture-sessions", response_model=CaptureSessionOut, status_code=201
+)
 async def create_capture_session(
     process_id: str,
     data: CaptureSessionCreate = CaptureSessionCreate(),
@@ -47,7 +53,7 @@ async def create_capture_session(
 async def start_capture_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = await _get_session(session_id, db)
     session.status = "capturing"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
 
@@ -72,7 +78,7 @@ async def start_capture_session(session_id: str, db: AsyncSession = Depends(get_
 async def stop_capture_session(session_id: str, db: AsyncSession = Depends(get_db)):
     session = await _get_session(session_id, db)
     session.status = "stopped"
-    session.stopped_at = datetime.now(timezone.utc)
+    session.stopped_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
 

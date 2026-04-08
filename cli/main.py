@@ -475,7 +475,7 @@ def cmd_login_list(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("recording", "capturing"):
             color = _yellow
         else:
-            color = str
+            color = str  # type: ignore[assignment]
         print(f"  {_cyan(sid[:8])}  {_bold(app)}  {color(status)}  {url}")
 
     print()
@@ -727,11 +727,9 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
         time.sleep(3)
         print(".", end="", flush=True)
         try:
-            resp = _tabby_http(
-                "GET", f"/admin/service-profiles/{profile_db_id}", token=admin_token
-            )
+            resp = _tabby_http("GET", f"/admin/service-profiles/{profile_db_id}", token=admin_token)
             assert isinstance(resp, dict)
-            final_state = resp.get("state", resp.get("status", ""))
+            final_state = resp.get("state", resp.get("status", ""))  # type: ignore[assignment]
             if final_state in ("HEALTHY", "ACTIVE"):
                 break
             if final_state in ("FAILED", "ERROR"):
@@ -824,7 +822,9 @@ def cmd_workflow_record(args: argparse.Namespace) -> int:
     print(f"  3. Navigate to {start_url} and perform your workflow")
     print("  4. When done, click Complete in the extension")
     print()
-    print(f"  Then run: {_bold(f'noui workflow export-mcp {session_id} --profile <tabby_profile_id>')}")
+    print(
+        f"  Then run: {_bold(f'noui workflow export-mcp {session_id} --profile <tabby_profile_id>')}"
+    )
     return 0
 
 
@@ -857,7 +857,7 @@ def cmd_workflow_list(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("recording", "capturing"):
             color = _yellow
         else:
-            color = str
+            color = str  # type: ignore[assignment]
         print(f"  {_cyan(sid[:8])}  {_bold(name)}  {color(status)}  {url}")
 
     print()
@@ -892,8 +892,10 @@ def cmd_workflow_captures(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("capturing", "recording"):
             color = _yellow
         else:
-            color = str
-        print(f"  {_cyan(sid[:8])}  {_cyan(sid)}  {color(status)}  project:{project_id[:8] if project_id else '—'}")
+            color = str  # type: ignore[assignment]
+        print(
+            f"  {_cyan(sid[:8])}  {_cyan(sid)}  {color(status)}  project:{project_id[:8] if project_id else '—'}"
+        )
 
     print()
     return 0
@@ -906,12 +908,19 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         return 1
 
     session_id: str = args.session_id
-    profile_id: str = args.profile
+    profile_id: str = getattr(args, "profile", "")
+    profile_slug: str = getattr(args, "profile_slug", "")
+    profile_db_id: str = getattr(args, "profile_db_id", "")
     capture_session_id: str = getattr(args, "capture_session", "")
+    do_verify: bool = getattr(args, "verify", False)
 
     params = []
     if profile_id:
         params.append(f"tabby_profile_id={profile_id}")
+    if profile_slug:
+        params.append(f"profile_slug={profile_slug}")
+    if profile_db_id:
+        params.append(f"profile_db_id={profile_db_id}")
     if capture_session_id:
         params.append(f"capture_session_id={capture_session_id}")
     path = f"/workflow-sessions/{session_id}/export-mcp"
@@ -930,16 +939,83 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
 
     server_id = result.get("server_id", "?")
     tool_count = result.get("tool_count", len(result.get("tools", [])))
-    output_path = result.get("output_path", "?")
 
     print()
     print(_bold("MCP server generated:"))
     print(f"  Server ID  : {_cyan(server_id)}")
     print(f"  Tools      : {tool_count}")
-    print(f"  Output     : {output_path}")
+    auth_info = result.get("auth", {})
+    if auth_info.get("requires_auth"):
+        strategy = auth_info.get("strategy") or "tabby_credentials"
+        slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or "?"
+        print(f"  Auth       : {strategy} (profile: {slug})")
+    else:
+        print("  Auth       : none (public API)")
     print()
-    print(f"  Run: {_bold(f'noui mcp start {server_id}')}")
+
+    if do_verify and server_id != "?":
+        print(f"Running auth verification for {_cyan(server_id)} …")
+        rc = _run_mcp_verify(server_id)
+        if rc != 0:
+            return rc
+
+    print(f"  Install: {_bold(f'noui mcp install {server_id} claude-code')}")
     return 0
+
+
+def _run_mcp_verify(server_id: str) -> int:
+    """Run auth verification for a compiled MCP server."""
+    import asyncio
+
+    manifest_path = _find_mcp_manifest(server_id)
+    if not manifest_path:
+        print(_red(f"  Server {server_id!r} not found in mcp_servers/"))
+        return 1
+
+    server_dir = manifest_path.parent
+    auth_plan_path = server_dir / "auth_plan.json"
+    if not auth_plan_path.exists():
+        print(_green("  No auth_plan.json — server is public, no verification needed."))
+        return 0
+
+    try:
+        from compiler.mcp.auth_verifier import verify_before_install
+    except ImportError as exc:
+        print(_red(f"  Cannot import auth_verifier: {exc}"))
+        return 1
+
+    try:
+        result = asyncio.run(verify_before_install(server_dir))
+    except Exception as exc:
+        print(_red(f"  Verification error: {exc}"))
+        return 1
+
+    status = result.status
+    if status == "PASS":
+        print(_green(f"  Auth verification PASSED: {result.message}"))
+        return 0
+    elif status == "REPAIR_APPLIED":
+        print(_yellow(f"  Auth repair applied: {result.message}"))
+        print(_yellow("  Re-run `noui mcp verify` after completing the suggested repairs."))
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or repair.get("action", "")
+            if cmd:
+                print(f"    → {cmd}")
+        return 0
+    elif status == "NEEDS_SECRET":
+        print(_red("  Auth verification FAILED — missing secrets:"))
+        print(f"  {result.message}")
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or ""
+            var = repair.get("env_var") or ""
+            if cmd:
+                print(f"    → Run: {cmd}")
+            elif var:
+                print(f"    → Set: {var}=<value> in noui/.env")
+        return 1
+    else:
+        print(_red(f"  Auth verification UNSUPPORTED: {result.message}"))
+        return 1
 
 
 # ---------------------------------------------------------------------------
@@ -1160,7 +1236,11 @@ def _install_claude_desktop(
     mcp_servers = config.setdefault("mcpServers", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in Claude Desktop. Use --force to overwrite."))
+        print(
+            _yellow(
+                f"'{server_id}' is already configured in Claude Desktop. Use --force to overwrite."
+            )
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1195,7 +1275,11 @@ def _install_claude_code(
     mcp_servers = config.setdefault("mcpServers", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in Claude Code. Use --force to overwrite."))
+        print(
+            _yellow(
+                f"'{server_id}' is already configured in Claude Code. Use --force to overwrite."
+            )
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1227,13 +1311,13 @@ def _install_codex(
     already_exists = section_header in text
 
     if already_exists and not force:
-        print(_yellow(f"'{server_id}' is already configured in Codex CLI. Use --force to overwrite."))
+        print(
+            _yellow(f"'{server_id}' is already configured in Codex CLI. Use --force to overwrite.")
+        )
         return 0
 
     new_block = (
-        f"\n[mcp_servers.{server_id}]\n"
-        f'command = "{python_cmd}"\n'
-        f'args = ["{server_script}"]\n'
+        f'\n[mcp_servers.{server_id}]\ncommand = "{python_cmd}"\nargs = ["{server_script}"]\n'
     )
 
     if already_exists and force:
@@ -1270,7 +1354,9 @@ def _install_opencode(
     mcp_servers = config.setdefault("mcp", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in OpenCode. Use --force to overwrite."))
+        print(
+            _yellow(f"'{server_id}' is already configured in OpenCode. Use --force to overwrite.")
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1383,12 +1469,15 @@ def cmd_mcp_docs(args: argparse.Namespace) -> int:
     if check_only:
         if api_md_path.exists():
             existing = api_md_path.read_text(encoding="utf-8")
+
             # Strip the generated-at timestamp line before comparing (it always differs)
             def _strip_timestamp(text: str) -> str:
                 return "\n".join(
-                    line for line in text.splitlines()
+                    line
+                    for line in text.splitlines()
                     if not line.startswith("> **Generated by NoUI** on ")
                 )
+
             if _strip_timestamp(existing) == _strip_timestamp(new_content):
                 print(_green(f"API.md is up to date: {api_md_path}"))
                 return 0
@@ -1416,7 +1505,113 @@ def cmd_mcp_docs(args: argparse.Namespace) -> int:
 
 def _slug_to_title(slug: str) -> str:
     import re as _re
+
     return " ".join(word.capitalize() for word in _re.split(r"[-_]+", slug))
+
+
+# ---------------------------------------------------------------------------
+# mcp verify / diagnose-auth
+# ---------------------------------------------------------------------------
+
+
+def cmd_mcp_verify(args: argparse.Namespace) -> int:
+    """Verify auth for a compiled MCP server before installation."""
+    server_id: str = args.server_id
+    return _run_mcp_verify(server_id)
+
+
+def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
+    """Diagnose auth issues for a compiled MCP server and suggest repairs."""
+    import asyncio
+    import json as _json
+
+    server_id: str = args.server_id
+    manifest_path = _find_mcp_manifest(server_id)
+    if not manifest_path:
+        print(_red(f"Server {server_id!r} not found in mcp_servers/"))
+        return 1
+
+    server_dir = manifest_path.parent
+    auth_plan_path = server_dir / "auth_plan.json"
+
+    # Show manifest auth section
+    try:
+        manifest = _json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to read manifest: {exc}"))
+        return 1
+
+    print(_bold(f"Auth diagnosis for {_cyan(server_id)}"))
+    print()
+    auth_meta = manifest.get("auth", {})
+    print(_bold("Manifest auth:"))
+    for k, v in auth_meta.items():
+        print(f"  {k:<20} {v}")
+    print()
+
+    if not auth_plan_path.exists():
+        print(_yellow("No auth_plan.json found — server has no auth requirements."))
+        return 0
+
+    try:
+        auth_plan = _json.loads(auth_plan_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to read auth_plan.json: {exc}"))
+        return 1
+
+    print(_bold("Auth plan:"))
+    strategy = auth_plan.get("strategy", "none")
+    profile_slug = auth_plan.get("profile_slug", "")
+    required = auth_plan.get("required_auth", {})
+    fallbacks = auth_plan.get("fallbacks", [])
+
+    print(f"  strategy       : {strategy}")
+    print(f"  profile_slug   : {profile_slug or '(none)'}")
+    print(f"  required headers: {required.get('headers', [])}")
+    print(f"  required cookies: {required.get('cookies', [])}")
+    if fallbacks:
+        print("  fallbacks      :")
+        for fb in fallbacks:
+            if fb.get("type") == "static_secret_header":
+                env_var = fb.get("secret_env_var", "")
+                val = fb.get("value_template", "")
+                present = "✓" if __import__("os").environ.get(env_var) else "✗ MISSING"
+                print(f"    {fb['header']}: {val} [{env_var}={present}]")
+    print()
+
+    # Run verification
+    print(_bold("Running verification …"))
+    try:
+        from compiler.mcp.auth_verifier import verify_before_install
+
+        result = asyncio.run(verify_before_install(server_dir))
+    except Exception as exc:
+        print(_red(f"Verification error: {exc}"))
+        return 1
+
+    status_color = (
+        _green
+        if result.status == "PASS"
+        else (_yellow if result.status == "REPAIR_APPLIED" else _red)
+    )
+    print(f"  Status: {status_color(result.status)}")
+    print(f"  {result.message}")
+    if result.missing_artifacts:
+        print(f"  Missing: {', '.join(result.missing_artifacts)}")
+    if result.suggested_repairs:
+        print()
+        print(_bold("  Suggested repairs:"))
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or ""
+            var = repair.get("env_var") or ""
+            instructions = repair.get("instructions") or ""
+            if cmd:
+                print(f"    → {cmd}")
+            elif instructions:
+                print(f"    → {instructions}")
+            elif var:
+                print(f"    → Set {var}=<value> in noui/.env")
+    return 0 if result.status in ("PASS", "REPAIR_APPLIED") else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1519,7 +1714,11 @@ def _find_active_profile(profile_id: str, admin_token: str) -> dict[str, Any] | 
             resp.get("data", []) if isinstance(resp, dict) else list(resp)  # type: ignore[union-attr]
         )
         return next(
-            (p for p in profiles if p.get("profile_id") == profile_id and p.get("version_state") == "ACTIVE"),
+            (
+                p
+                for p in profiles
+                if p.get("profile_id") == profile_id and p.get("version_state") == "ACTIVE"
+            ),
             None,
         )
     except RuntimeError:
@@ -1559,8 +1758,20 @@ def _bypass_canary_gate(profile_db_id: str) -> bool:
     )
     try:
         subprocess.run(
-            ["docker", "compose", "exec", "-T", "postgres", "psql",
-             "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "browser_hitl",
+                "-d",
+                "browser_hitl",
+                "-c",
+                sql,
+            ],
             cwd=str(TABBY_DIR),
             check=True,
             capture_output=True,
@@ -1642,12 +1853,22 @@ def _build_app_payload(profile_id: str, cfg: dict[str, Any]) -> dict[str, Any]:
     if requires_login:
         steps += [
             {"action": "fill", "selector": cfg["email_sel"], "value": "${USERNAME}"},
-            {"action": "fill", "selector": cfg["pass_sel"], "value": "${PASSWORD}", "sensitive": True},
+            {
+                "action": "fill",
+                "selector": cfg["pass_sel"],
+                "value": "${PASSWORD}",
+                "sensitive": True,
+            },
             {"action": "click", "selector": cfg["submit_sel"]},
         ]
         if cfg.get("otp_required") and cfg.get("otp_sel"):
             steps += [
-                {"action": "wait_for", "selector": cfg["otp_sel"], "timeout_ms": 120000, "sensitive": True},
+                {
+                    "action": "wait_for",
+                    "selector": cfg["otp_sel"],
+                    "timeout_ms": 120000,
+                    "sensitive": True,
+                },
                 {"action": "click", "selector": "[type='submit']"},
             ]
     if cfg.get("success_sel"):
@@ -1721,20 +1942,25 @@ def _ensure_service_profile(
             print(_red(f"  App creation failed: {exc}"))
             return False
 
-        entry.update({
-            "app_id": app_id,
-            "login_url": cfg["login_url"],
-            "username": cfg.get("username", ""),
-            "credential_ref": app_payload["login_config"]["credential_ref"],
-            "login_config": app_payload["login_config"],
-        })
+        entry.update(
+            {
+                "app_id": app_id,
+                "login_url": cfg["login_url"],
+                "username": cfg.get("username", ""),
+                "credential_ref": app_payload["login_config"]["credential_ref"],
+                "login_config": app_payload["login_config"],
+            }
+        )
         if cfg.get("username") and cfg.get("password"):
             secret = _secret_name(profile_id)
             prefix = _env_prefix(secret)
-            _write_env_vars(ENV_LOCAL, {
-                f"{prefix}_USERNAME": cfg["username"],
-                f"{prefix}_PASSWORD": cfg["password"],
-            })
+            _write_env_vars(
+                ENV_LOCAL,
+                {
+                    f"{prefix}_USERNAME": cfg["username"],
+                    f"{prefix}_PASSWORD": cfg["password"],
+                },
+            )
 
     login_config = entry.get("login_config", {})
 
@@ -1876,10 +2102,13 @@ def cmd_tabby_start(args: argparse.Namespace) -> int:  # noqa: ARG001
     if not ENV_LOCAL.exists():
         if ENV_EXAMPLE.exists():
             import shutil
+
             shutil.copy(ENV_EXAMPLE, ENV_LOCAL)
             print(_yellow(f"Created {ENV_LOCAL} from template."))
             print(_yellow("Edit it and set JWT_SIGNING_KEY, TENANT_ENCRYPTION_KEY,"))
-            print(_yellow("AGENT_SECRET_HMAC_KEY, ADMIN_BOOTSTRAP_EMAIL, ADMIN_BOOTSTRAP_PASSWORD."))
+            print(
+                _yellow("AGENT_SECRET_HMAC_KEY, ADMIN_BOOTSTRAP_EMAIL, ADMIN_BOOTSTRAP_PASSWORD.")
+            )
             print()
         else:
             print(_red(f"No .env.local found at {ENV_LOCAL}"))
@@ -1917,7 +2146,11 @@ def cmd_tabby_start(args: argparse.Namespace) -> int:  # noqa: ARG001
         start_new_session=True,
     )
     TABBY_PID_FILE.write_text(str(proc.pid))
-    print(f"Starting Tabby API (PID {proc.pid}) … logs → {_cyan(str(TABBY_LOG_FILE))}", end="", flush=True)
+    print(
+        f"Starting Tabby API (PID {proc.pid}) … logs → {_cyan(str(TABBY_LOG_FILE))}",
+        end="",
+        flush=True,
+    )
 
     for _ in range(60):
         time.sleep(1)
@@ -1993,12 +2226,16 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
     admin_email = env_local.get("ADMIN_BOOTSTRAP_EMAIL", "")
     admin_password = env_local.get("ADMIN_BOOTSTRAP_PASSWORD", "")
     if not admin_email or not admin_password:
-        print(_red(f"ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be set in {ENV_LOCAL}"))
+        print(
+            _red(f"ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be set in {ENV_LOCAL}")
+        )
         return 1
 
     print(f"Logging in as {_cyan(admin_email)} …", end=" ", flush=True)
     try:
-        login_resp = _tabby_http("POST", "/login", {"email": admin_email, "password": admin_password})
+        login_resp = _tabby_http(
+            "POST", "/login", {"email": admin_email, "password": admin_password}
+        )
         assert isinstance(login_resp, dict)
         admin_token = login_resp.get("token") or login_resp.get("access_token", "")
     except (RuntimeError, AssertionError) as exc:
@@ -2047,16 +2284,24 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
 
     if not (client_id and client_secret):
         try:
-            existing_clients = _tabby_http("GET", f"/admin/agent-clients/{tenant_id}", token=admin_token)
+            existing_clients = _tabby_http(
+                "GET", f"/admin/agent-clients/{tenant_id}", token=admin_token
+            )
             if not isinstance(existing_clients, list):
                 existing_clients = []
         except RuntimeError:
             existing_clients = []
 
-        match = next((c for c in existing_clients if c.get("name") == TABBY_AGENT_CLIENT_NAME), None)
+        match = next(
+            (c for c in existing_clients if c.get("name") == TABBY_AGENT_CLIENT_NAME), None
+        )
 
         if match and not args.force:
-            print(f"Agent client '{TABBY_AGENT_CLIENT_NAME}' already exists — rotating secret …", end=" ", flush=True)
+            print(
+                f"Agent client '{TABBY_AGENT_CLIENT_NAME}' already exists — rotating secret …",
+                end=" ",
+                flush=True,
+            )
             try:
                 rotated = _tabby_http(
                     "POST",
@@ -2104,11 +2349,13 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
             print(_red("No client_secret in response — cannot proceed."))
             return 1
 
-    cache.update({
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "default_profiles": allowed_profiles,
-    })
+    cache.update(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "default_profiles": allowed_profiles,
+        }
+    )
     _save_cache(cache)
 
     print()
@@ -2121,11 +2368,14 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
             print(_yellow(f"  Skipped '{profile_id}' — re-run setup to configure it."))
 
     env_file = Path(args.env_file) if args.env_file else NOUI_DIR / ".env"
-    _write_env_vars(env_file, {
-        "TABBY_API_URL": TABBY_API_HOST,
-        "TABBY_CLIENT_ID": client_id,
-        "TABBY_CLIENT_SECRET": client_secret,
-    })
+    _write_env_vars(
+        env_file,
+        {
+            "TABBY_API_URL": TABBY_API_HOST,
+            "TABBY_CLIENT_ID": client_id,
+            "TABBY_CLIENT_SECRET": client_secret,
+        },
+    )
 
     print()
     print(_green("✓ Setup complete!"))
@@ -2212,7 +2462,9 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             defaults = cache.get("default_profiles", [])
             profile_id = defaults[0] if len(defaults) == 1 else None
         if not profile_id:
-            print(_red("Could not determine profile. Run 'noui tabby setup' first or pass --profile."))
+            print(
+                _red("Could not determine profile. Run 'noui tabby setup' first or pass --profile.")
+            )
             return 1
 
     entry = apps.get(profile_id)
@@ -2246,12 +2498,14 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
 
     env = {**os.environ}
     env.update(_load_env_local())
-    env.update({
-        "SESSION_ID": session_id,
-        "APP_ID": app_id,
-        "TENANT_ID": tenant_id,
-        "STREAMING_MODE": "cdp",
-    })
+    env.update(
+        {
+            "SESSION_ID": session_id,
+            "APP_ID": app_id,
+            "TENANT_ID": tenant_id,
+            "STREAMING_MODE": "cdp",
+        }
+    )
 
     creds_mount = Path("/tmp/tabby-local-secrets")
     secret_name = entry.get("credential_ref", "k8s:secret/no-auth").replace("k8s:secret/", "")
@@ -2339,8 +2593,20 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         sql = f"UPDATE sessions SET state='HEALTHY' WHERE id='{session_id}'"
         try:
             subprocess.run(
-                ["docker", "compose", "exec", "-T", "postgres", "psql",
-                 "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    "postgres",
+                    "psql",
+                    "-U",
+                    "browser_hitl",
+                    "-d",
+                    "browser_hitl",
+                    "-c",
+                    sql,
+                ],
                 cwd=str(TABBY_DIR),
                 check=True,
                 capture_output=True,
@@ -2354,7 +2620,8 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     print(_green(f"✓ Session for '{profile_id}' is HEALTHY"))
     print()
     print("  You can now record a workflow with Tabby auth:")
-    print(f"    {_bold('noui workflow record \"My Workflow\" <url>')}")
+    _cmd = 'noui workflow record "My Workflow" <url>'
+    print(f"    {_bold(_cmd)}")
     return 0
 
 
@@ -2455,13 +2722,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         default="",
         metavar="TABBY_PROFILE_ID",
-        help="Tabby profile ID to associate with the MCP server",
+        help="Legacy: Tabby profile ID (UUID or slug). Prefer --profile-slug.",
+    )
+    wf_export.add_argument(
+        "--profile-slug",
+        default="",
+        metavar="SLUG",
+        dest="profile_slug",
+        help="Tabby profile slug for runtime credential requests (e.g. 'adopt-bank')",
+    )
+    wf_export.add_argument(
+        "--profile-db-id",
+        default="",
+        metavar="UUID",
+        dest="profile_db_id",
+        help="Tabby profile DB UUID for admin operations only",
     )
     wf_export.add_argument(
         "--capture-session",
         default="",
         metavar="CAPTURE_SESSION_ID",
         help="Use HAR/clicks from an ABCD capture session instead of the workflow session",
+    )
+    wf_export.add_argument(
+        "--verify",
+        action="store_true",
+        default=False,
+        help="Run auth verification after export; report PASS/NEEDS_SECRET before install",
     )
 
     # --- mcp ---
@@ -2486,7 +2773,9 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["claude-desktop", "claude-code", "codex", "opencode"],
         help="Target agent",
     )
-    mcp_install_p.add_argument("--force", action="store_true", help="Overwrite existing configuration")
+    mcp_install_p.add_argument(
+        "--force", action="store_true", help="Overwrite existing configuration"
+    )
 
     mcp_docs_p = mcp_sub.add_parser("docs", help="Regenerate API.md from current tools.json")
     mcp_docs_p.add_argument("server_id", help="MCP server ID")
@@ -2496,6 +2785,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exit non-zero if API.md is stale without regenerating",
     )
 
+    mcp_verify_p = mcp_sub.add_parser(
+        "verify",
+        help="Verify auth for a compiled MCP server (checks Tabby creds, env vars, dry-run)",
+    )
+    mcp_verify_p.add_argument("server_id", help="MCP server ID")
+
+    mcp_diagnose_p = mcp_sub.add_parser(
+        "diagnose-auth",
+        help="Show auth diagnosis and repair guidance for a compiled MCP server",
+    )
+    mcp_diagnose_p.add_argument("server_id", help="MCP server ID")
+
     # --- tabby ---
     tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")
     tabby_sub = tabby_parser.add_subparsers(dest="tabby_command")
@@ -2504,7 +2805,9 @@ def _build_parser() -> argparse.ArgumentParser:
     tabby_sub.add_parser("start", help="Start Docker Compose infra and Tabby API in background")
 
     tabby_stop_p = tabby_sub.add_parser("stop", help="Stop the Tabby API process")
-    tabby_stop_p.add_argument("--infra", action="store_true", help="Also stop Docker Compose services")
+    tabby_stop_p.add_argument(
+        "--infra", action="store_true", help="Also stop Docker Compose services"
+    )
 
     tabby_setup_p = tabby_sub.add_parser(
         "setup",
@@ -2603,7 +2906,7 @@ def _dispatch_workflow(args: argparse.Namespace) -> int:
 def _dispatch_mcp(args: argparse.Namespace) -> int:
     cmd = getattr(args, "mcp_command", None)
     if cmd is None:
-        print("Usage: noui mcp {list,status,start,stop,install,docs}")
+        print("Usage: noui mcp {list,status,start,stop,install,docs,verify,diagnose-auth}")
         return 1
     dispatch = {
         "list": cmd_mcp_list,
@@ -2612,6 +2915,8 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
         "stop": cmd_mcp_stop,
         "install": cmd_mcp_install,
         "docs": cmd_mcp_docs,
+        "verify": cmd_mcp_verify,
+        "diagnose-auth": cmd_mcp_diagnose_auth,
     }
     fn = dispatch.get(cmd)
     if fn is None:

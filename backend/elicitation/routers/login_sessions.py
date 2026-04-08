@@ -1,18 +1,25 @@
 """Routes for login-recording sessions."""
 
 import json
+from datetime import UTC
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.elicitation import login_profile_generator
 from backend.elicitation.database import get_db
-from backend.elicitation.models import CaptureSession, CaptureLoginDraft, Process, Project, TimelineEvent
-from backend.shared.models import ClickEvent
+from backend.elicitation.models import (
+    CaptureLoginDraft,
+    CaptureSession,
+    Process,
+    Project,
+    TimelineEvent,
+)
 from backend.elicitation.schemas import LoginSessionCreate, LoginSessionOut
 from backend.elicitation.timeline_utils import emit_timeline_event
-from backend.elicitation import login_profile_generator
+from backend.shared.models import ClickEvent
 
 router = APIRouter(prefix="/login-sessions", tags=["login-sessions"])
 
@@ -20,6 +27,7 @@ router = APIRouter(prefix="/login-sessions", tags=["login-sessions"])
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 async def _get_login_session(session_id: str, db: AsyncSession) -> CaptureSession:
     result = await db.execute(
@@ -37,6 +45,7 @@ async def _get_login_session(session_id: str, db: AsyncSession) -> CaptureSessio
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
+
 
 @router.post("", response_model=LoginSessionOut, status_code=201)
 async def create_login_session(data: LoginSessionCreate, db: AsyncSession = Depends(get_db)):
@@ -89,7 +98,7 @@ async def create_login_session(data: LoginSessionCreate, db: AsyncSession = Depe
 
     await emit_timeline_event(
         db,
-        project_id=project_id,
+        project_id=project_id or "",
         process_id=process_id,
         capture_session_id=session.id,
         event_type="login_recording_created",
@@ -104,6 +113,7 @@ async def create_login_session(data: LoginSessionCreate, db: AsyncSession = Depe
 # ---------------------------------------------------------------------------
 # List
 # ---------------------------------------------------------------------------
+
 
 @router.get("", response_model=list[LoginSessionOut])
 async def list_login_sessions(
@@ -124,6 +134,7 @@ async def list_login_sessions(
 # Get
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{session_id}", response_model=LoginSessionOut)
 async def get_login_session(session_id: str, db: AsyncSession = Depends(get_db)):
     return await _get_login_session(session_id, db)
@@ -133,12 +144,14 @@ async def get_login_session(session_id: str, db: AsyncSession = Depends(get_db))
 # Start
 # ---------------------------------------------------------------------------
 
+
 @router.put("/{session_id}/start", response_model=LoginSessionOut)
 async def start_login_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     session = await _get_login_session(session_id, db)
     session.status = "capturing"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
     return session
@@ -148,12 +161,14 @@ async def start_login_session(session_id: str, db: AsyncSession = Depends(get_db
 # Complete (stop)
 # ---------------------------------------------------------------------------
 
+
 @router.put("/{session_id}/complete", response_model=LoginSessionOut)
 async def complete_login_session(session_id: str, db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     session = await _get_login_session(session_id, db)
     session.status = "stopped"
-    session.stopped_at = datetime.now(timezone.utc)
+    session.stopped_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
 
@@ -174,6 +189,7 @@ async def complete_login_session(session_id: str, db: AsyncSession = Depends(get
 # ---------------------------------------------------------------------------
 # Analyze (generate bundle)
 # ---------------------------------------------------------------------------
+
 
 @router.post("/{session_id}/analyze")
 async def analyze_login_session(
@@ -216,13 +232,33 @@ async def analyze_login_session(
         events_check = sibling_result.scalars().all()
 
     click_events = [
-        {c: getattr(ev, c) for c in [
-            "id", "event_type", "url", "tag_name", "element_id", "class_name",
-            "text_content", "href", "selector", "x", "y", "input_type",
-            "value", "field_name", "field_role", "is_redacted", "autocomplete",
-            "placeholder", "aria_label", "role_attr", "data_attrs_json",
-            "timestamp",
-        ]}
+        {
+            c: getattr(ev, c)
+            for c in [
+                "id",
+                "event_type",
+                "url",
+                "tag_name",
+                "element_id",
+                "class_name",
+                "text_content",
+                "href",
+                "selector",
+                "x",
+                "y",
+                "input_type",
+                "value",
+                "field_name",
+                "field_role",
+                "is_redacted",
+                "autocomplete",
+                "placeholder",
+                "aria_label",
+                "role_attr",
+                "data_attrs_json",
+                "timestamp",
+            ]
+        }
         for ev in events_check
     ]
 
@@ -236,9 +272,7 @@ async def analyze_login_session(
         .order_by(TimelineEvent.timestamp.asc())
     )
     url_events = [
-        {c: getattr(ev, c) for c in [
-            "id", "event_type", "summary", "metadata_json", "timestamp"
-        ]}
+        {c: getattr(ev, c) for c in ["id", "event_type", "summary", "metadata_json", "timestamp"]}
         for ev in url_result.scalars().all()
     ]
 
@@ -294,6 +328,7 @@ async def analyze_login_session(
 # Get bundle
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{session_id}/bundle")
 async def get_login_bundle(session_id: str, db: AsyncSession = Depends(get_db)):
     """Return the previously generated bundle for this session."""
@@ -312,4 +347,4 @@ async def get_login_bundle(session_id: str, db: AsyncSession = Depends(get_db)):
     try:
         return json.loads(draft.bundle_json)
     except Exception:
-        raise HTTPException(500, "Bundle JSON is malformed")
+        raise HTTPException(500, "Bundle JSON is malformed") from None

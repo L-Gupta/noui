@@ -1,15 +1,15 @@
 ---
 name: noui-record-workflow
-description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export-mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers both authenticated (with tabby_profile_id) and unauthenticated (public API) sub-paths.
+description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export-mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers authenticated (session-cookie via Tabby), static API-key, and unauthenticated sub-paths.
 ---
 
 # NoUI Record Workflow
 
-Record a browser workflow and compile it into a runnable FastMCP server. Works for both authenticated apps (requires a `tabby_profile_id` from `/noui-record-login`) and public apps with no auth.
+Record a browser workflow and compile it into a runnable FastMCP server. Works for session-cookie apps (full Tabby login flow), static API-key apps (just set an env var), and public unauthenticated APIs.
 
 All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`.
 
-**Prerequisite:** `/noui-setup` must be complete. For authenticated apps (Path A), `/noui-record-login` must also be complete, you must have the `tabby_profile_id`, **and a live Tabby browser session must be running** (`tabby session ensure` from Step 8 of `/noui-record-login`).
+**Prerequisite:** `/noui-setup` must be complete. For Path A (session-cookie), `/noui-record-login` must also be complete and a live Tabby browser session must be running (`tabby session ensure`).
 
 ---
 
@@ -17,12 +17,13 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 
 **Ask the user (or infer from context) before proceeding:**
 
-| App requires login? | Path |
+| App auth type | Path |
 |---|---|
-| Yes — have `tabby_profile_id` from `/noui-record-login` | **Path A** — authenticated |
-| No — public API, no credentials needed | **Path B** — unauthenticated |
+| Session-cookie login — have `tabby_profile_id` from `/noui-record-login` | **Path A** — tabby_credentials |
+| Static API key / Bearer token in every request, no login page | **Path B** — static_secret_header |
+| Public API, no credentials needed | **Path C** — unauthenticated |
 
-The steps are identical except that Path A passes `--profile <tabby_profile_id>` to `workflow export-mcp`.
+The compiler auto-detects the strategy from the HAR (Authorization header + no Set-Cookie → Path B). Pass `--profile-slug` for both Path A and B; omit it for Path C.
 
 ---
 
@@ -30,7 +31,8 @@ The steps are identical except that Path A passes `--profile <tabby_profile_id>`
 
 - **ALWAYS** start the backend before asking the user to record
 - **NEVER** skip `workflow export-mcp` — recording alone produces no server
-- For Path A: **NEVER** omit `--profile` — without it the generated server makes unauthenticated requests and will fail against protected endpoints
+- For Path A/B: **ALWAYS** pass `--profile-slug <slug>` — this is the runtime credential identifier; without it auth falls back to unauthenticated
+- **NEVER** pass the DB UUID as `--profile-slug` — that is admin-only; use the human-readable slug (e.g. `adopt-bank`, not `8fdadf43-...`)
 - **ALWAYS** note the `server_id` printed after export — it is required for all `mcp` commands
 - **ALWAYS** create the workflow session with the CLI before the user records in Chrome — the session_id is needed for export
 
@@ -98,13 +100,28 @@ Lists all capture sessions with their IDs and statuses. Note the `id` of the mos
 
 Pass both the `session_id` (from Step 2) and the `capture_session_id` (from Step 3):
 
-### Path A — Authenticated
+### Path A — Session-cookie (tabby_credentials)
 
 ```bash
-.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
+.venv/bin/python cli/main.py workflow export-mcp <session_id> \
+  --capture-session <capture_session_id> \
+  --profile-slug <app-slug> \
+  --profile-db-id <tabby_profile_db_uuid> \
+  --verify
 ```
 
-### Path B — Unauthenticated
+### Path B — Static API key (static_secret_header)
+
+```bash
+.venv/bin/python cli/main.py workflow export-mcp <session_id> \
+  --capture-session <capture_session_id> \
+  --profile-slug <app-slug> \
+  --verify
+```
+
+The compiler detects the Bearer token in the HAR and automatically generates the `static_secret_header` strategy. `--verify` will report `NEEDS_SECRET <APP_SLUG>_API_KEY` — set that env var in `noui/.env` then re-run to confirm `PASS`.
+
+### Path C — Unauthenticated
 
 ```bash
 .venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id>
@@ -116,10 +133,11 @@ The CLI compiles the captured HAR and click events into a FastMCP server and wri
 mcp_servers/<app_slug>/<server_id>/
 ├── server.py            # FastMCP entrypoint
 ├── tools.json           # Tool inventory (source of truth for tool shapes)
-├── manifest.json        # Server manifest (auth metadata, runtime config)
+├── manifest.json        # Server manifest (schema v2: strategy, profile_slug, auth_plan_file)
 ├── API.md               # Human-readable API reference (auto-generated)
+├── auth_plan.json       # Auth strategy + fallback recipes (Path A/B only; never stores secrets)
 ├── noui_runtime/
-│   └── auth.py          # Runtime auth adapter (fetches live creds from Tabby)
+│   └── auth.py          # Runtime auth adapter (2-step Tabby flow or static env var)
 └── operations/
     └── <tool_name>.py   # One file per generated tool
 ```
@@ -144,9 +162,10 @@ MCP server generated:
 ```
 Start
   │
-  ├─ App requires auth?
-  │     ├─ Yes → Path A (need tabby_profile_id from /record-login)
-  │     └─ No  → Path B
+  ├─ App auth type?
+  │     ├─ Session-cookie login → Path A (need tabby_profile_id from /record-login)
+  │     ├─ Static API key/Bearer → Path B (just need the slug; set env var after export)
+  │     └─ No auth → Path C
   │
   ├─ Backend running?
   │     ├─ No  → Step 1: start
@@ -158,8 +177,10 @@ Start
     └─ get capture_session_id: workflow captures
   │
   Step 4:
-    Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile <tabby_profile_id>
-    Path B: workflow export-mcp <session_id> --capture-session <cap_id>
+    Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid> --verify
+    Path B: workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --verify
+              └─ NEEDS_SECRET? → add <APP>_API_KEY to noui/.env → re-run --verify → PASS
+    Path C: workflow export-mcp <session_id> --capture-session <cap_id>
     └─ note server_id
   │
   Done → pass server_id to /mcp
@@ -177,7 +198,9 @@ Start
 | `.venv/bin/python cli/main.py workflow list` | List existing workflow sessions |
 | `.venv/bin/python cli/main.py workflow captures` | List capture sessions recorded via the extension (use this to get `capture_session_id`) |
 | `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
-| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile <id>` | Compile session → FastMCP server (authenticated) |
+| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug>` | Compile session → FastMCP server (authenticated, auto-detects strategy) |
+| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid>` | As above, also records DB UUID for admin operations |
+| `.venv/bin/python cli/main.py workflow export-mcp ... --verify` | Run AuthVerifier immediately after export; reports PASS / NEEDS_SECRET |
 
 ---
 
@@ -190,7 +213,9 @@ Start
 | Export fails: "No HAR file found for this session" | Extension did not capture HAR — confirm Capture was active during the workflow |
 | Export fails: "Workflow session not found" | The `session_id` doesn't match any workflow session — run `workflow list` |
 | Generated server has 0 tools | Workflow had no capturable HTTP calls — re-record navigating through the full flow |
-| Path A: server fails with auth errors at runtime | Confirm `tabby_profile_id` is correct and profile is HEALTHY via `login validate` |
+| Export reports `NEEDS_SECRET <VAR>` | Set `<VAR>=<value>` in `noui/.env`, then re-run `--verify` or `mcp verify <server_id>` |
+| Path A/B: auth errors at runtime | Run `mcp diagnose-auth <server_id>` — shows strategy, missing env vars, and repair steps |
+| Path A: Tabby returns empty credentials | Profile not HEALTHY — run `login validate` and `tabby session ensure` |
 | `mcp_servers/` empty after export | Check `.noui-backend.log` in the repo root for compiler errors |
 | Tools have unreadable raw API param names (`f_sid`, `bl`, `reqid`) | Run `/noui-generalize` |
 | `API.md` missing from the generated folder | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to generate it |

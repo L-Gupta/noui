@@ -19,10 +19,10 @@ from typing import Any
 
 from backend.config import settings
 
-
 # ---------------------------------------------------------------------------
 # Internal HTTP helper
 # ---------------------------------------------------------------------------
+
 
 def _tabby_http(
     method: str,
@@ -53,6 +53,7 @@ def _tabby_http(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def is_alive() -> bool:
     """Return True if the Tabby API is reachable and reports healthy."""
@@ -168,12 +169,106 @@ def promote_profile(profile_db_id: str, token: str) -> dict:
 
     Raises RuntimeError on failure.
     """
-    resp = _tabby_http(
-        "POST", f"/admin/profiles/{profile_db_id}/promote", token=token
-    )
+    resp = _tabby_http("POST", f"/admin/profiles/{profile_db_id}/promote", token=token)
     if not isinstance(resp, dict):
         raise RuntimeError(
             f"Unexpected response type from POST /admin/profiles/{profile_db_id}/promote: "
             f"{type(resp)}"
+        )
+    return resp
+
+
+def get_agent_token(client_id: str, client_secret: str) -> str:
+    """
+    POST /auth/agent-token with client credentials.
+
+    Returns the short-lived agent JWT string.
+    Raises RuntimeError if credentials are missing or rejected.
+    """
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "Missing TABBY_CLIENT_ID or TABBY_CLIENT_SECRET — "
+            "run `noui tabby setup` to provision agent credentials"
+        )
+    resp = _tabby_http(
+        "POST",
+        "/auth/agent-token",
+        body={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+        },
+    )
+    if not isinstance(resp, dict):
+        raise RuntimeError(f"Unexpected response from POST /auth/agent-token: {type(resp)}")
+    token = resp.get("access_token") or resp.get("token", "")
+    if not token:
+        raise RuntimeError(f"POST /auth/agent-token returned no token: {resp}")
+    return token
+
+
+def request_credentials(profile_slug: str, agent_token: str) -> dict:
+    """
+    POST /credentials/request using the profile slug (not the DB UUID).
+
+    Returns the credentials dict with "headers" and "cookies" lists.
+    Raises RuntimeError on failure.
+    """
+    resp = _tabby_http(
+        "POST",
+        "/credentials/request",
+        body={"profile_id": profile_slug},
+        token=agent_token,
+    )
+    if not isinstance(resp, dict):
+        raise RuntimeError(f"Unexpected response from POST /credentials/request: {type(resp)}")
+    # Normalize: credentials may be nested under "credentials" key
+    return resp.get("credentials", resp)
+
+
+def get_service_profile_by_slug(profile_slug: str, token: str) -> dict | None:
+    """
+    Search admin profiles for one matching the given profile_id slug.
+
+    Returns the profile dict if found, None if not found.
+    Raises RuntimeError on API errors.
+    """
+    try:
+        resp = _tabby_http("GET", "/admin/profiles", token=token)
+    except RuntimeError:
+        return None
+    if isinstance(resp, list):
+        profiles = resp
+    elif isinstance(resp, dict):
+        profiles = resp.get("profiles", [])
+    else:
+        profiles = []
+    for p in profiles:
+        if p.get("profile_id") == profile_slug or p.get("slug") == profile_slug:
+            return p
+    return None
+
+
+def update_service_profile_credential_types(
+    profile_db_id: str,
+    credential_types: dict,
+    token: str,
+) -> dict:
+    """
+    PATCH /admin/profiles/{id} to update credential_types.
+
+    credential_types should be {"headers": [...], "cookies": [...]}.
+    Returns the updated profile dict.
+    Raises RuntimeError on failure.
+    """
+    resp = _tabby_http(
+        "PATCH",
+        f"/admin/profiles/{profile_db_id}",
+        body={"credential_types": credential_types},
+        token=token,
+    )
+    if not isinstance(resp, dict):
+        raise RuntimeError(
+            f"Unexpected response from PATCH /admin/profiles/{profile_db_id}: {type(resp)}"
         )
     return resp

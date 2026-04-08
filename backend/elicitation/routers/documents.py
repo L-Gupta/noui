@@ -1,11 +1,14 @@
 """Routes for markdown documents (canonical + user)."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.elicitation.database import get_db
-from backend.elicitation.markdown_generator import generate_process_markdown, generate_project_markdown
+from backend.elicitation.markdown_generator import (
+    generate_process_markdown,
+    generate_project_markdown,
+)
 from backend.elicitation.models import Document
 from backend.elicitation.schemas import DocumentCreate, DocumentOut, DocumentUpdate
 
@@ -14,8 +17,11 @@ router = APIRouter(tags=["documents"])
 
 # ── Project documents ─────────────────────────────────────────────────────
 
+
 @router.post("/projects/{project_id}/documents", response_model=DocumentOut, status_code=201)
-async def create_document(project_id: str, data: DocumentCreate, db: AsyncSession = Depends(get_db)):
+async def create_document(
+    project_id: str, data: DocumentCreate, db: AsyncSession = Depends(get_db)
+):
     doc = Document(
         project_id=project_id,
         process_id=data.process_id,
@@ -46,6 +52,7 @@ async def list_project_documents(
 
 # ── Process documents ─────────────────────────────────────────────────────
 
+
 @router.get("/processes/{process_id}/documents", response_model=list[DocumentOut])
 async def list_process_documents(
     process_id: str,
@@ -62,6 +69,7 @@ async def list_process_documents(
 
 # ── Single document CRUD ──────────────────────────────────────────────────
 
+
 @router.get("/documents/{document_id}", response_model=DocumentOut)
 async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Document).where(Document.id == document_id))
@@ -72,7 +80,9 @@ async def get_document(document_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/documents/{document_id}", response_model=DocumentOut)
-async def update_document(document_id: str, data: DocumentUpdate, db: AsyncSession = Depends(get_db)):
+async def update_document(
+    document_id: str, data: DocumentUpdate, db: AsyncSession = Depends(get_db)
+):
     result = await db.execute(select(Document).where(Document.id == document_id))
     doc = result.scalar_one_or_none()
     if not doc:
@@ -99,6 +109,7 @@ async def delete_document(document_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # ── Generate canonical documents ──────────────────────────────────────────
+
 
 @router.post("/projects/{project_id}/documents/generate", response_model=DocumentOut)
 async def generate_project_doc(project_id: str, db: AsyncSession = Depends(get_db)):
@@ -138,6 +149,7 @@ async def generate_process_doc(process_id: str, db: AsyncSession = Depends(get_d
 
     # We need the project_id from the process
     from backend.elicitation.models import Process
+
     result = await db.execute(select(Process).where(Process.id == process_id))
     process = result.scalar_one_or_none()
     if not process:

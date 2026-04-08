@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlparse
 from typing import Any
-
+from urllib.parse import urlparse
 
 # ---------------------------------------------------------------------------
 # Selector helpers
 # ---------------------------------------------------------------------------
+
 
 def _selector_confidence(ev: dict) -> str:
     """Return 'high', 'medium', or 'low'."""
@@ -47,7 +47,12 @@ def _selector_confidence(ev: dict) -> str:
     if elem_id and not re.search(r"[0-9a-f]{8,}", elem_id, re.I):
         return "high"
     # medium: name, autocomplete, aria-label, placeholder
-    if ev.get("field_name") or ev.get("autocomplete") or ev.get("aria_label") or ev.get("placeholder"):
+    if (
+        ev.get("field_name")
+        or ev.get("autocomplete")
+        or ev.get("aria_label")
+        or ev.get("placeholder")
+    ):
         return "medium"
     return "low"
 
@@ -105,6 +110,7 @@ def _build_selector(ev: dict) -> str:
 # URL helpers
 # ---------------------------------------------------------------------------
 
+
 def _url_origin(url: str) -> str:
     try:
         p = urlparse(url)
@@ -128,7 +134,9 @@ def _is_redirect_hop(prev_url: str, next_url: str) -> bool:
         if prev_parsed.netloc != next_parsed.netloc:
             return False
         path = next_parsed.path.lower()
-        return any(s in path for s in ["/callback", "/sso", "/auth", "/oauth", "/saml", "/redirect"])
+        return any(
+            s in path for s in ["/callback", "/sso", "/auth", "/oauth", "/saml", "/redirect"]
+        )
     except Exception:
         return False
 
@@ -136,6 +144,7 @@ def _is_redirect_hop(prev_url: str, next_url: str) -> bool:
 # ---------------------------------------------------------------------------
 # HAR analysis helpers
 # ---------------------------------------------------------------------------
+
 
 def _analyze_har(har: dict | None) -> dict[str, Any]:
     """Extract auth signals from HAR entries."""
@@ -197,6 +206,7 @@ def _analyze_har(har: dict | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Core generator
 # ---------------------------------------------------------------------------
+
 
 def generate(
     session: dict,
@@ -260,7 +270,6 @@ def generate(
     steps: list[dict[str, Any]] = []
     otp_selector: str | None = None
     has_otp = False
-    username_selector: str | None = None
     password_selector: str | None = None
     submit_selector: str | None = None
     post_login_url: str | None = None
@@ -302,60 +311,79 @@ def generate(
             if tag in ("input", "textarea", ""):
                 _username_signals = {"username", "email", "user", "mail"}
                 _password_signals = {"password", "pass", "passwd", "pwd"}
-                if inp_type == "password" or ac in ("current-password", "new-password") or any(s in fname or s in elem_id for s in _password_signals):
+                if (
+                    inp_type == "password"
+                    or ac in ("current-password", "new-password")
+                    or any(s in fname or s in elem_id for s in _password_signals)
+                ):
                     field_role = "password"
-                elif inp_type in ("text", "email", "tel") or ac in ("username", "email") or any(s in fname or s in elem_id for s in _username_signals):
+                elif (
+                    inp_type in ("text", "email", "tel")
+                    or ac in ("username", "email")
+                    or any(s in fname or s in elem_id for s in _username_signals)
+                ):
                     field_role = "username"
         selector = _build_selector(ev)
         confidence = _selector_confidence(ev)
 
         if confidence == "low":
-            review_items.append({
-                "type": "selector_confidence",
-                "severity": "warning",
-                "message": f"Low-confidence selector for {field_role or event_type} event: {selector!r}",
-                "selector": selector,
-                "confidence": "low",
-            })
+            review_items.append(
+                {
+                    "type": "selector_confidence",
+                    "severity": "warning",
+                    "message": f"Low-confidence selector for {field_role or event_type} event: {selector!r}",
+                    "selector": selector,
+                    "confidence": "low",
+                }
+            )
 
         if field_role == "username":
-            username_selector = selector
-            steps.append({
-                "action": "fill",
-                "selector": selector,
-                "value": "${USERNAME}",
-            })
+            steps.append(
+                {
+                    "action": "fill",
+                    "selector": selector,
+                    "value": "${USERNAME}",
+                }
+            )
         elif field_role == "password":
             password_selector = selector
-            steps.append({
-                "action": "fill",
-                "selector": selector,
-                "value": "${PASSWORD}",
-                "sensitive": True,
-            })
+            steps.append(
+                {
+                    "action": "fill",
+                    "selector": selector,
+                    "value": "${PASSWORD}",
+                    "sensitive": True,
+                }
+            )
         elif field_role == "otp":
             has_otp = True
             otp_selector = selector
             # Do NOT generate fill ${OTP} — use wait_for with sensitive: true
-            steps.append({
-                "action": "wait_for",
-                "selector": selector,
-                "timeout_ms": 120000,
-                "sensitive": True,
-            })
+            steps.append(
+                {
+                    "action": "wait_for",
+                    "selector": selector,
+                    "timeout_ms": 120000,
+                    "sensitive": True,
+                }
+            )
         elif field_role == "unknown_sensitive":
-            steps.append({
-                "action": "wait_for",
-                "selector": selector,
-                "timeout_ms": 60000,
-                "sensitive": True,
-            })
-            review_items.append({
-                "type": "unresolved_sensitive_field",
-                "severity": "warning",
-                "message": f"Unknown sensitive field detected — review and classify: {selector!r}",
-                "selector": selector,
-            })
+            steps.append(
+                {
+                    "action": "wait_for",
+                    "selector": selector,
+                    "timeout_ms": 60000,
+                    "sensitive": True,
+                }
+            )
+            review_items.append(
+                {
+                    "type": "unresolved_sensitive_field",
+                    "severity": "warning",
+                    "message": f"Unknown sensitive field detected — review and classify: {selector!r}",
+                    "selector": selector,
+                }
+            )
         elif event_type == "click":
             tag = (ev.get("tag_name") or "").lower()
             inp_type = (ev.get("input_type") or "").lower()
@@ -366,19 +394,23 @@ def generate(
                 continue
             # Likely a submit or nav click
             step = {"action": "click", "selector": selector}
-            if tag in ("button", "input") and (inp_type == "submit" or text in ("login", "sign in", "log in", "submit", "continue")):
+            if tag in ("button", "input") and (
+                inp_type == "submit" or text in ("login", "sign in", "log in", "submit", "continue")
+            ):
                 submit_selector = selector
             steps.append(step)
         elif event_type in ("input", "change"):
             # Non-role-labeled input (e.g. remember-me checkbox, tenant select)
             if ev.get("is_redacted"):
                 # Skip — we don't know what this is
-                review_items.append({
-                    "type": "redacted_field",
-                    "severity": "info",
-                    "message": f"Redacted field with no role detected — review: {selector!r}",
-                    "selector": selector,
-                })
+                review_items.append(
+                    {
+                        "type": "redacted_field",
+                        "severity": "info",
+                        "message": f"Redacted field with no role detected — review: {selector!r}",
+                        "selector": selector,
+                    }
+                )
             else:
                 val = ev.get("value") or ""
                 tag_lower = (ev.get("tag_name") or "").lower()
@@ -401,16 +433,19 @@ def generate(
         elif password_selector:
             # Guess: try [type='submit']
             steps.append({"action": "click", "selector": "[type='submit']"})
-            review_items.append({
-                "type": "otp_submit_inferred",
-                "severity": "warning",
-                "message": "OTP submit step inferred — verify the correct submit selector",
-            })
+            review_items.append(
+                {
+                    "type": "otp_submit_inferred",
+                    "severity": "warning",
+                    "message": "OTP submit step inferred — verify the correct submit selector",
+                }
+            )
 
     # Determine post-login success condition
     # Find the last stable URL after the login sequence
     stable_urls = [
-        to_url for from_url, to_url in url_transitions
+        to_url
+        for from_url, to_url in url_transitions
         if not _is_redirect_hop(from_url, to_url) and to_url != first_url
     ]
     if stable_urls:
@@ -423,17 +458,21 @@ def generate(
             _raw = "http://" + _raw
         parsed = urlparse(_raw)
         url_pattern = f"{parsed.scheme}://{parsed.netloc}/**"
-        steps.append({
-            "action": "wait_for_url",
-            "pattern": url_pattern,
-            "timeout_ms": 30000,
-        })
+        steps.append(
+            {
+                "action": "wait_for_url",
+                "pattern": url_pattern,
+                "timeout_ms": 30000,
+            }
+        )
     else:
-        review_items.append({
-            "type": "no_post_login_url",
-            "severity": "warning",
-            "message": "Could not determine post-login URL — add a wait_for or wait_for_url step manually",
-        })
+        review_items.append(
+            {
+                "type": "no_post_login_url",
+                "severity": "warning",
+                "message": "Could not determine post-login URL — add a wait_for or wait_for_url step manually",
+            }
+        )
 
     # ---- Build credential_ref ----
     secret_name = f"tabby-{profile_id}"
@@ -458,7 +497,6 @@ def generate(
     # ---- Infer keepalive ----
     keepalive_actions: list[dict] = []
     keepalive_health_checks: list[dict] = []
-    keepalive_confidence = "low"
 
     # Use post-login URL for url_check if known; always ensure scheme present.
     def _ensure_scheme(url: str, fallback_scheme: str = "http") -> str:
@@ -467,26 +505,31 @@ def generate(
         return f"{fallback_scheme}://{url}"
 
     if post_login_url:
-        keepalive_health_checks.append({
-            "type": "url_check",
-            "url": _ensure_scheme(post_login_url),
-            "expect_status": 200,
-        })
-        keepalive_confidence = "medium"
+        keepalive_health_checks.append(
+            {
+                "type": "url_check",
+                "url": _ensure_scheme(post_login_url),
+                "expect_status": 200,
+            }
+        )
     else:
         # Fall back to a path we know returns 200 — avoid bare origin which
         # typically redirects (302) and fails an exact status check.
-        keepalive_health_checks.append({
-            "type": "url_check",
-            "url": _ensure_scheme(origin) + "/",
-            "expect_status": 200,
-        })
-        review_items.append({
-            "type": "keepalive_weak",
-            "severity": "warning",
-            "message": "Keepalive health check uses origin URL — consider adding a dom_check for an authenticated-only element",
-            "confidence": "low",
-        })
+        keepalive_health_checks.append(
+            {
+                "type": "url_check",
+                "url": _ensure_scheme(origin) + "/",
+                "expect_status": 200,
+            }
+        )
+        review_items.append(
+            {
+                "type": "keepalive_weak",
+                "severity": "warning",
+                "message": "Keepalive health check uses origin URL — consider adding a dom_check for an authenticated-only element",
+                "confidence": "low",
+            }
+        )
 
     keepalive_config: dict[str, Any] = {
         "interval_seconds": 300,
@@ -528,6 +571,7 @@ def generate(
 
     # ---- Build ServiceProfile draft ----
     import time as _time
+
     t = _time.localtime()
     version = f"{t.tm_year % 100}.{t.tm_mon}.{t.tm_mday}"
 
@@ -542,12 +586,8 @@ def generate(
 
     # ---- Validation ----
     generator_valid = True
-    has_username_step = any(
-        s.get("value") == "${USERNAME}" for s in steps
-    )
-    has_password_step = any(
-        s.get("value") == "${PASSWORD}" for s in steps
-    )
+    has_username_step = any(s.get("value") == "${USERNAME}" for s in steps)
+    has_password_step = any(s.get("value") == "${PASSWORD}" for s in steps)
     if not has_username_step and not has_otp:
         issues.append("No username field detected in recording")
     if not has_password_step and not has_otp:
@@ -556,11 +596,13 @@ def generate(
 
     if issues:
         for issue in issues:
-            review_items.append({
-                "type": "generator_issue",
-                "severity": "error",
-                "message": issue,
-            })
+            review_items.append(
+                {
+                    "type": "generator_issue",
+                    "severity": "error",
+                    "message": issue,
+                }
+            )
 
     return {
         "recording": {

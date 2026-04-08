@@ -126,6 +126,10 @@ Start
   ├─ Need to see what servers exist?
   │     └─ Step 1: mcp list
   │
+  ├─ Auth not working / not sure if server is ready?
+  │     ├─ mcp verify <server_id>      → PASS / NEEDS_SECRET / REPAIR_APPLIED
+  │     └─ mcp diagnose-auth <server_id> → full breakdown with repair suggestions
+  │
   ├─ Need to run a server standalone (test/debug)?
   │     ├─ Step 2: mcp start <server_id>
   │     ├─ Step 3: mcp status <server_id>
@@ -148,6 +152,8 @@ Start
 | `.venv/bin/python cli/main.py mcp status <server_id>` | Show running state, tool count, and manifest path |
 | `.venv/bin/python cli/main.py mcp docs <server_id>` | Regenerate `API.md` from current `tools.json` |
 | `.venv/bin/python cli/main.py mcp docs <server_id> --check` | Exit non-zero if `API.md` is stale (for CI / agent validation) |
+| `.venv/bin/python cli/main.py mcp verify <server_id>` | Run AuthVerifier — reports PASS / REPAIR_APPLIED / NEEDS_SECRET / UNSUPPORTED |
+| `.venv/bin/python cli/main.py mcp diagnose-auth <server_id>` | Full auth diagnosis: strategy, env var status, per-step verification, repair suggestions |
 
 ---
 
@@ -161,4 +167,6 @@ Start
 | Stale PID (shows running but is not) | `mcp stop <server_id>` clears stale PID; then `mcp start` again |
 | Claude Code does not see tools after adding to config | Confirm absolute paths are correct; restart Claude Code; run `/noui-mcp` to verify connection |
 | `server.py not found` error | Re-run `workflow export-mcp` for that session to regenerate the server |
-| Auth errors at runtime (authenticated server) | Confirm Tabby is running and `tabby_profile_id` in `manifest.json` is HEALTHY |
+| Auth errors at runtime (authenticated server) | Run `mcp diagnose-auth <server_id>` — shows missing env vars and repair steps |
+| `NEEDS_SECRET <VAR>` from verify | Set `<VAR>=<value>` in `noui/.env` and re-run `mcp verify <server_id>` |
+| Server is v1 (no `auth_plan.json`) | Re-export with `workflow export-mcp ... --profile-slug <slug> --verify` to upgrade to v2 |

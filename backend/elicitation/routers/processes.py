@@ -17,7 +17,9 @@ async def create_process(project_id: str, body: ProcessCreate, db: AsyncSession 
     result = await db.execute(select(Project).where(Project.id == project_id))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Project not found")
-    process = Process(project_id=project_id, name=body.name, description=body.description, base_url=body.base_url)
+    process = Process(
+        project_id=project_id, name=body.name, description=body.description, base_url=body.base_url
+    )
     db.add(process)
     await db.commit()
     await db.refresh(process)
