@@ -906,12 +906,19 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         return 1
 
     session_id: str = args.session_id
-    profile_id: str = args.profile
+    profile_id: str = getattr(args, "profile", "")
+    profile_slug: str = getattr(args, "profile_slug", "")
+    profile_db_id: str = getattr(args, "profile_db_id", "")
     capture_session_id: str = getattr(args, "capture_session", "")
+    do_verify: bool = getattr(args, "verify", False)
 
     params = []
     if profile_id:
         params.append(f"tabby_profile_id={profile_id}")
+    if profile_slug:
+        params.append(f"profile_slug={profile_slug}")
+    if profile_db_id:
+        params.append(f"profile_db_id={profile_db_id}")
     if capture_session_id:
         params.append(f"capture_session_id={capture_session_id}")
     path = f"/workflow-sessions/{session_id}/export-mcp"
@@ -930,16 +937,83 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
 
     server_id = result.get("server_id", "?")
     tool_count = result.get("tool_count", len(result.get("tools", [])))
-    output_path = result.get("output_path", "?")
 
     print()
     print(_bold("MCP server generated:"))
     print(f"  Server ID  : {_cyan(server_id)}")
     print(f"  Tools      : {tool_count}")
-    print(f"  Output     : {output_path}")
+    auth_info = result.get("auth", {})
+    if auth_info.get("requires_auth"):
+        strategy = auth_info.get("strategy") or "tabby_credentials"
+        slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or "?"
+        print(f"  Auth       : {strategy} (profile: {slug})")
+    else:
+        print(f"  Auth       : none (public API)")
     print()
-    print(f"  Run: {_bold(f'noui mcp start {server_id}')}")
+
+    if do_verify and server_id != "?":
+        print(f"Running auth verification for {_cyan(server_id)} …")
+        rc = _run_mcp_verify(server_id)
+        if rc != 0:
+            return rc
+
+    print(f"  Install: {_bold(f'noui mcp install {server_id} claude-code')}")
     return 0
+
+
+def _run_mcp_verify(server_id: str) -> int:
+    """Run auth verification for a compiled MCP server."""
+    import asyncio
+
+    manifest_path = _find_mcp_manifest(server_id)
+    if not manifest_path:
+        print(_red(f"  Server {server_id!r} not found in mcp_servers/"))
+        return 1
+
+    server_dir = manifest_path.parent
+    auth_plan_path = server_dir / "auth_plan.json"
+    if not auth_plan_path.exists():
+        print(_green("  No auth_plan.json — server is public, no verification needed."))
+        return 0
+
+    try:
+        from compiler.mcp.auth_verifier import verify_before_install
+    except ImportError as exc:
+        print(_red(f"  Cannot import auth_verifier: {exc}"))
+        return 1
+
+    try:
+        result = asyncio.run(verify_before_install(server_dir))
+    except Exception as exc:
+        print(_red(f"  Verification error: {exc}"))
+        return 1
+
+    status = result.status
+    if status == "PASS":
+        print(_green(f"  Auth verification PASSED: {result.message}"))
+        return 0
+    elif status == "REPAIR_APPLIED":
+        print(_yellow(f"  Auth repair applied: {result.message}"))
+        print(_yellow("  Re-run `noui mcp verify` after completing the suggested repairs."))
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or repair.get("action", "")
+            if cmd:
+                print(f"    → {cmd}")
+        return 0
+    elif status == "NEEDS_SECRET":
+        print(_red(f"  Auth verification FAILED — missing secrets:"))
+        print(f"  {result.message}")
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or ""
+            var = repair.get("env_var") or ""
+            if cmd:
+                print(f"    → Run: {cmd}")
+            elif var:
+                print(f"    → Set: {var}=<value> in noui/.env")
+        return 1
+    else:
+        print(_red(f"  Auth verification UNSUPPORTED: {result.message}"))
+        return 1
 
 
 # ---------------------------------------------------------------------------
@@ -1321,6 +1395,106 @@ def cmd_mcp_install(args: argparse.Namespace) -> int:
         "opencode": _install_opencode,
     }
     return installers[agent](server_id, server_dir, python_cmd, server_script, force)
+
+
+# ---------------------------------------------------------------------------
+# mcp verify / diagnose-auth
+# ---------------------------------------------------------------------------
+
+
+def cmd_mcp_verify(args: argparse.Namespace) -> int:
+    """Verify auth for a compiled MCP server before installation."""
+    server_id: str = args.server_id
+    return _run_mcp_verify(server_id)
+
+
+def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
+    """Diagnose auth issues for a compiled MCP server and suggest repairs."""
+    import asyncio
+    import json as _json
+
+    server_id: str = args.server_id
+    manifest_path = _find_mcp_manifest(server_id)
+    if not manifest_path:
+        print(_red(f"Server {server_id!r} not found in mcp_servers/"))
+        return 1
+
+    server_dir = manifest_path.parent
+    auth_plan_path = server_dir / "auth_plan.json"
+
+    # Show manifest auth section
+    try:
+        manifest = _json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to read manifest: {exc}"))
+        return 1
+
+    print(_bold(f"Auth diagnosis for {_cyan(server_id)}"))
+    print()
+    auth_meta = manifest.get("auth", {})
+    print(_bold("Manifest auth:"))
+    for k, v in auth_meta.items():
+        print(f"  {k:<20} {v}")
+    print()
+
+    if not auth_plan_path.exists():
+        print(_yellow("No auth_plan.json found — server has no auth requirements."))
+        return 0
+
+    try:
+        auth_plan = _json.loads(auth_plan_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to read auth_plan.json: {exc}"))
+        return 1
+
+    print(_bold("Auth plan:"))
+    strategy = auth_plan.get("strategy", "none")
+    profile_slug = auth_plan.get("profile_slug", "")
+    required = auth_plan.get("required_auth", {})
+    fallbacks = auth_plan.get("fallbacks", [])
+
+    print(f"  strategy       : {strategy}")
+    print(f"  profile_slug   : {profile_slug or '(none)'}")
+    print(f"  required headers: {required.get('headers', [])}")
+    print(f"  required cookies: {required.get('cookies', [])}")
+    if fallbacks:
+        print(f"  fallbacks      :")
+        for fb in fallbacks:
+            if fb.get("type") == "static_secret_header":
+                env_var = fb.get("secret_env_var", "")
+                val = fb.get("value_template", "")
+                present = "✓" if __import__("os").environ.get(env_var) else "✗ MISSING"
+                print(f"    {fb['header']}: {val} [{env_var}={present}]")
+    print()
+
+    # Run verification
+    print(_bold("Running verification …"))
+    try:
+        from compiler.mcp.auth_verifier import verify_before_install
+        result = asyncio.run(verify_before_install(server_dir))
+    except Exception as exc:
+        print(_red(f"Verification error: {exc}"))
+        return 1
+
+    status_color = _green if result.status == "PASS" else (_yellow if result.status == "REPAIR_APPLIED" else _red)
+    print(f"  Status: {status_color(result.status)}")
+    print(f"  {result.message}")
+    if result.missing_artifacts:
+        print(f"  Missing: {', '.join(result.missing_artifacts)}")
+    if result.suggested_repairs:
+        print()
+        print(_bold("  Suggested repairs:"))
+        for repair in result.suggested_repairs:
+            cmd = repair.get("command") or ""
+            var = repair.get("env_var") or ""
+            instructions = repair.get("instructions") or ""
+            if cmd:
+                print(f"    → {cmd}")
+            elif instructions:
+                print(f"    → {instructions}")
+            elif var:
+                print(f"    → Set {var}=<value> in noui/.env")
+    return 0 if result.status in ("PASS", "REPAIR_APPLIED") else 1
 
 
 # ---------------------------------------------------------------------------
@@ -2359,13 +2533,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profile",
         default="",
         metavar="TABBY_PROFILE_ID",
-        help="Tabby profile ID to associate with the MCP server",
+        help="Legacy: Tabby profile ID (UUID or slug). Prefer --profile-slug.",
+    )
+    wf_export.add_argument(
+        "--profile-slug",
+        default="",
+        metavar="SLUG",
+        dest="profile_slug",
+        help="Tabby profile slug for runtime credential requests (e.g. 'adopt-bank')",
+    )
+    wf_export.add_argument(
+        "--profile-db-id",
+        default="",
+        metavar="UUID",
+        dest="profile_db_id",
+        help="Tabby profile DB UUID for admin operations only",
     )
     wf_export.add_argument(
         "--capture-session",
         default="",
         metavar="CAPTURE_SESSION_ID",
         help="Use HAR/clicks from an ABCD capture session instead of the workflow session",
+    )
+    wf_export.add_argument(
+        "--verify",
+        action="store_true",
+        default=False,
+        help="Run auth verification after export; report PASS/NEEDS_SECRET before install",
     )
 
     # --- mcp ---
@@ -2391,6 +2585,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Target agent",
     )
     mcp_install_p.add_argument("--force", action="store_true", help="Overwrite existing configuration")
+
+    mcp_verify_p = mcp_sub.add_parser(
+        "verify",
+        help="Verify auth for a compiled MCP server (checks Tabby creds, env vars, dry-run)",
+    )
+    mcp_verify_p.add_argument("server_id", help="MCP server ID")
+
+    mcp_diagnose_p = mcp_sub.add_parser(
+        "diagnose-auth",
+        help="Show auth diagnosis and repair guidance for a compiled MCP server",
+    )
+    mcp_diagnose_p.add_argument("server_id", help="MCP server ID")
 
     # --- tabby ---
     tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")
@@ -2499,7 +2705,7 @@ def _dispatch_workflow(args: argparse.Namespace) -> int:
 def _dispatch_mcp(args: argparse.Namespace) -> int:
     cmd = getattr(args, "mcp_command", None)
     if cmd is None:
-        print("Usage: noui mcp {list,status,start,stop,install}")
+        print("Usage: noui mcp {list,status,start,stop,install,verify,diagnose-auth}")
         return 1
     dispatch = {
         "list": cmd_mcp_list,
@@ -2507,6 +2713,8 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
         "start": cmd_mcp_start,
         "stop": cmd_mcp_stop,
         "install": cmd_mcp_install,
+        "verify": cmd_mcp_verify,
+        "diagnose-auth": cmd_mcp_diagnose_auth,
     }
     fn = dispatch.get(cmd)
     if fn is None:

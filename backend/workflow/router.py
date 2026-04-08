@@ -163,13 +163,34 @@ async def delete_workflow_session(
 @router.post("/{session_id}/export-mcp")
 async def export_mcp(
     session_id: str,
-    tabby_profile_id: str = Query("", description="Tabby profile ID for auth binding (omit for public/unauthenticated APIs)"),
-    capture_session_id: str = Query("", description="ABCD capture session ID to use instead of workflow session data"),
+    tabby_profile_id: str = Query(
+        "",
+        description=(
+            "Legacy: Tabby profile ID (UUID or slug). "
+            "Prefer profile_slug for new integrations."
+        ),
+    ),
+    profile_slug: str = Query(
+        "",
+        description=(
+            "Tabby profile slug for runtime credential requests "
+            "(POST /credentials/request). Takes precedence over tabby_profile_id."
+        ),
+    ),
+    profile_db_id: str = Query(
+        "",
+        description="Tabby profile DB UUID for admin/version operations only.",
+    ),
+    capture_session_id: str = Query(
+        "",
+        description="ABCD capture session ID to use instead of workflow session data",
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Compile a workflow recording into a runnable FastMCP server.
 
     - Loads click events, url events, and HAR for this session
+    - Detects auth signals and generates auth_plan.json
     - Runs the MCP compiler
     - Writes output to noui/mcp_servers/<app_slug>/<server_id>/
     - Returns the manifest dict
@@ -271,6 +292,8 @@ async def export_mcp(
             click_events=click_dicts,
             url_events=url_dicts,
             output_dir=output_dir,
+            profile_slug=profile_slug,
+            profile_db_id=profile_db_id,
         )
     except Exception as exc:
         logger.exception("MCP compilation failed for session %s", session_id)
