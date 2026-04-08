@@ -53,30 +53,13 @@ Verify:
 
 ---
 
-## Step 2 — Create Workflow Session and Capture Session
+## Step 2 — Start Capture
 
 ```bash
-.venv/bin/python cli/main.py workflow record "<TaskName>" "<website_url>"
+.venv/bin/python cli/main.py autopilot start-capture "<TaskName>" "<website_url>"
 ```
 
-Note the `session_id`, `project_id`, and `process_id` from the output.
-
-Then create a capture session:
-
-```bash
-curl -s -X POST http://localhost:8002/processes/<process_id>/capture-sessions \
-  -H 'Content-Type: application/json' \
-  -d '{"click_tracking": true, "url_monitoring": true, "har_capture": true}' | python3 -m json.tool
-```
-
-Note the capture session `id`.
-
-Start the capture session:
-
-```bash
-curl -s -X PUT http://localhost:8002/capture-sessions/<capture_session_id>/start \
-  -H 'Content-Type: application/json' | python3 -m json.tool
-```
+This single command creates the workflow session, capture session, starts HAR capture, click tracking, and URL monitoring in the extension. Note the **workflow_session_id** and **capture_session_id** from the output — you need both for stop and export.
 
 ---
 
@@ -170,81 +153,138 @@ Before clicking any button that could have side effects, check if it's in the fo
 - **STOP before** Send, Submit, Pay, Delete, Publish, Invite — unless explicitly allowed
 - **ASK the user** if uncertain about a destructive action
 
-### Available Browser Commands
+---
 
-| Command | Primary Param | Description |
-|---------|--------------|-------------|
-| `get_page_info` | — | Get current URL and title |
-| `get_page_summary` | — | List all visible interactive elements |
-| `navigate` | `url` | Navigate to a URL |
-| `click_element` | `selector` | Click by CSS selector |
-| `click_by_text` | `text` | Click first visible element containing text |
-| `type_text` | `selector`, `text` | Type into a field by selector |
-| `type_into_label` | `label`, `text` | Type into field matching label/placeholder |
-| `select_option` | `selector`, `value` | Select dropdown option |
-| `press_key` | `key` | Press a keyboard key (Enter, Tab, Escape) |
-| `wait_for_selector` | `selector` | Wait up to 10s for element |
-| `wait_for_url` | `url_substring` | Wait up to 10s for URL change |
-| `take_screenshot` | — | Capture screenshot (use sparingly) |
-| `query_elements` | `selector` | Query elements by CSS selector |
-| `eval_js` | `code` | Evaluate JavaScript in the page |
+## Handling Complex UIs (SPAs, Custom Widgets)
+
+### Timing: Wait for Dynamic Content
+
+SPAs load content asynchronously. After any navigation or click that triggers a page transition:
+
+1. Use `wait_for_selector` to wait for a specific element that signals the page is ready, OR
+2. Use `wait_for_url` if the URL changes, OR
+3. Wait 2-3 seconds and re-run `get_page_summary` to check if elements have appeared.
+
+Do NOT blindly proceed after a click — always verify the page state updated before your next action.
+
+### Autocomplete / Typeahead Fields
+
+These fields show a dropdown of suggestions as you type. Standard `type_into_label` + `press_key Enter` often fails because the dropdown needs time to appear and requires a specific selection action.
+
+Strategy:
+1. `type_into_label label="<field>" text="<partial text>"` — type a few characters
+2. Wait 1-2 seconds for the suggestions dropdown to appear
+3. `get_page_summary` — look for dropdown/listbox elements in the results
+4. `click_by_text "<suggestion text>"` to select the desired option, OR
+5. `press_key ArrowDown` one or more times, then `press_key Enter`
+6. `get_page_summary` — verify the field now shows the selected value
+
+If `get_page_summary` does not show the dropdown options (common in Shadow DOM or canvas-based UIs), use `take_screenshot` to visually see what appeared, then try `query_elements selector="[role='option'], [role='listbox'] li, .autocomplete-item"` to find selectable items.
+
+### Date Pickers
+
+Date pickers are rarely standard `<input type="date">`. They are usually custom widgets.
+
+Strategy:
+1. Click the date field to open the picker
+2. `get_page_summary` or `query_elements` to find the picker's navigation (month/year arrows, day cells)
+3. Navigate month-by-month using the arrow buttons if needed
+4. `click_by_text "<day number>"` or `click_element selector="[data-date='2025-01-15']"` for the target date
+5. If the picker has separate fields (month dropdown, day dropdown, year dropdown), treat each as its own interaction
+
+Fallback: Try `type_text` directly into the date input with the expected format (e.g., `01/15/2025`, `2025-01-15`) — some pickers accept typed input even if they show a widget.
+
+### Custom Dropdowns (non-`<select>` elements)
+
+Many SPAs replace `<select>` with divs styled as dropdowns. `select_option` will NOT work on these.
+
+Strategy:
+1. Click the dropdown trigger element to open it
+2. `get_page_summary` — look for the options that appeared (often `[role="option"]`, `[role="listbox"]`, or `li` elements)
+3. `click_by_text "<option text>"` to select
+4. If options are not visible in `get_page_summary`, use `query_elements selector="[role='option'], [role='menuitem'], ul.dropdown li"`
+
+### When You Are Stuck: Use Screenshots
+
+If `get_page_summary` returns elements but you cannot figure out what the page looks like or which element to interact with:
+
+```bash
+.venv/bin/python cli/main.py autopilot browser take_screenshot
+```
+
+This captures the current browser viewport. Use it to:
+- See what a custom widget actually looks like
+- Verify whether a dropdown/modal is open or closed
+- Check if an error message appeared
+- Understand spatial layout that element lists cannot convey
+
+Use sparingly — screenshots are heavier than text queries.
+
+---
+
+## Retry and Fallback Strategy
+
+When an action fails, follow this escalation sequence:
+
+### `click_by_text` fails ("not found")
+
+1. Run `get_page_summary` to see the exact text of all visible elements
+2. Try with a shorter or different substring (`click_by_text` uses case-insensitive partial match)
+3. Try `click_element` with a CSS selector from the summary
+4. If still failing, the element may be in shadow DOM or an iframe — use `query_elements` with broader selectors or `take_screenshot`
+
+### `type_into_label` fails ("not found")
+
+1. The field may lack a label/placeholder. Run `get_page_summary` and find the input by its index
+2. Use `type_text selector="<css-selector>"` with the selector from the summary
+3. If the field is a contenteditable div (not an input), `click_element` on it first, then try `type_text`
+
+### Element exists but click has no effect
+
+1. The element might need a different event — try `eval_js code="document.querySelector('<selector>').click()"`
+2. The element might be behind an overlay — check for modals with `query_elements selector="[role='dialog'], .modal, .overlay"`
+3. Take a screenshot to see what is blocking interaction
+
+### Page seems stuck / not updating after action
+
+1. Wait 2-3 seconds and re-check with `get_page_summary`
+2. Check if the URL changed with `get_page_info`
+3. Take a screenshot to see the current state
+4. The action may have triggered a loading spinner — use `wait_for_selector` for the expected next element
+
+### `eval_js` blocked by CSP
+
+This is common on Google, Facebook, and other major sites. Fall back to `click_element`, `type_text`, and `press_key` — these use the extension's content script which is not blocked by CSP.
 
 ---
 
 ## Step 6 — Stop Capture
 
-Stop the capture session (this triggers HAR upload by the extension):
-
 ```bash
-curl -s -X PUT http://localhost:8002/capture-sessions/<capture_session_id>/stop \
-  -H 'Content-Type: application/json' | python3 -m json.tool
+.venv/bin/python cli/main.py autopilot stop-capture <workflow_session_id> <capture_session_id>
 ```
 
-Complete the workflow session:
+This stops the extension capture (triggering HAR upload), stops the capture session in the database, completes the workflow session, and waits for the HAR upload. It reports whether a HAR file was successfully captured.
 
-```bash
-curl -s -X POST http://localhost:8002/workflow-sessions/<workflow_session_id>/complete \
-  -H 'Content-Type: application/json' | python3 -m json.tool
-```
-
-Wait 3 seconds for the HAR upload to finish:
-
-```bash
-sleep 3
-```
+If no HAR was captured, tell the user and suggest re-recording manually with `/noui-record-workflow`.
 
 ---
 
-## Step 7 — Verify Capture
-
-Check that a HAR file was uploaded:
+## Step 7 — Export MCP
 
 ```bash
-curl -s http://localhost:8002/capture-sessions/<capture_session_id> | python3 -m json.tool
-```
-
-Also list captures to see the session:
-
-```bash
-.venv/bin/python cli/main.py workflow captures
-```
-
----
-
-## Step 8 — Export MCP
-
-```bash
-.venv/bin/python cli/main.py workflow export-mcp <workflow_session_id> \
-  --capture-session <capture_session_id>
+.venv/bin/python cli/main.py autopilot export <workflow_session_id> <capture_session_id>
 ```
 
 If the user has a Tabby profile, add `--profile-slug <slug>`.
 
 Note the `server_id` from the output.
 
+If 0 tools were generated, the workflow may only have recorded HTML pages without API calls — the site may use server-side rendering. Tell the user.
+
 ---
 
-## Step 9 — Install and Report
+## Step 8 — Install and Report
 
 ```bash
 .venv/bin/python cli/main.py mcp install <server_id> claude-code
@@ -258,6 +298,121 @@ Report to the user:
 
 ---
 
+## Available Browser Commands
+
+All browser commands are executed via:
+```bash
+.venv/bin/python cli/main.py autopilot browser <command> [key=value ...]
+```
+
+They proxy to `POST http://localhost:8002/browser-commands/execute` with body `{"command_type": "<command>", "params": {...}}`. The extension picks up the command and returns a result.
+
+---
+
+#### `get_page_info`
+**Params:** none
+**Response:** `{ url: string, title: string, favIconUrl: string, tabId: number }`
+
+---
+
+#### `get_page_summary`
+**Params:** none
+**Response:** `{ url: string, title: string, total: number, returned: number (max 60), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, selector }] }`
+Returns all visible interactive elements (`a, button, input, select, textarea, [role="button|link|tab|menuitem"]`). Hidden elements (0x0 rect) are filtered out. Use this to understand what is on the page before acting.
+
+---
+
+#### `navigate`
+**Params:** `url` (required, string)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser navigate url=https://example.com`
+**Response:** `{ navigated: true, url: string, tabId: number }`
+
+---
+
+#### `click_element`
+**Params:** `selector` (required, CSS selector string)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_element selector=#my-btn`
+**Response:** `{ clicked: true, tagName: string, id: string|null, textContent: string (max 100) }` or `{ clicked: false, error: string }`
+
+---
+
+#### `click_by_text`
+**Params:** `text` (required, string — case-insensitive partial match)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_by_text "Sign In"`
+**Searches:** `a, button, [role="button"], input[type="submit"], input[type="button"]` — only visible elements.
+**Response:** `{ clicked: true, tagName: string, text: string }` or `{ clicked: false, error: string }`
+
+---
+
+#### `type_text`
+**Params:** `selector` (required), `text` (required), `clearFirst` (optional, bool, default `true`)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser type_text selector=#email text=user@example.com`
+**Behavior:** Focuses the element, optionally clears it, sets `.value`, dispatches `input` + `change` events.
+**Response:** `{ typed: true, tagName: string, id: string|null, finalValue: string (max 200) }` or `{ typed: false, error: string }`
+
+---
+
+#### `type_into_label`
+**Params:** `label` (required, string — matched against placeholder, aria-label, name, or `<label>` text, case-insensitive), `text` (required)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser type_into_label label=Email text=user@example.com`
+**Searches:** `input, textarea, select` elements. Matches the first element whose placeholder, aria-label, name attribute, or associated `<label>` contains the search string.
+**Response:** `{ typed: true, tagName: string, name: string, id: string }` or `{ typed: false, error: string }`
+
+---
+
+#### `select_option`
+**Params:** `selector` (required, CSS selector for `<select>`), `value` (required — exact value or case-insensitive text match)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser select_option selector=#country value=US`
+**Response:** `{ selected: true, value: string, text: string }` or `{ selected: false, error: string }`
+
+---
+
+#### `press_key`
+**Params:** `key` (required, string — e.g. `Enter`, `Tab`, `Escape`, `ArrowDown`), `selector` (optional — targets `document.activeElement` if omitted)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser press_key key=Enter`
+**Behavior:** Dispatches `keydown` + `keyup` (and `keypress` for Enter) on the target element.
+**Response:** `{ pressed: true, key: string, tagName: string }` or `{ pressed: false, error: string }`
+
+---
+
+#### `wait_for_selector`
+**Params:** `selector` (required), `timeout` (optional, ms, default 10000)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser wait_for_selector selector=.success-msg`
+**Response:** `{ found: bool, waited: number (ms), timeout?: true }`
+
+---
+
+#### `wait_for_url`
+**Params:** `url_substring` (required), `timeout` (optional, ms, default 10000)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser wait_for_url url_substring=/dashboard`
+**Response:** `{ matched: bool, url: string, waited: number (ms), timeout?: true }`
+
+---
+
+#### `query_elements`
+**Params:** `selector` (required, CSS selector), `includeText` (optional, bool, default `true`), `maxResults` (optional, number, default 20)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser query_elements selector="input, button"`
+**Response:** `{ count: number (total matched), returned: number, elements: [{ index, tagName, id, className, type, name, href, value (max 200), placeholder, disabled, visible, rect: {x,y,width,height}, selector, textContent? (max 200) }] }`
+Use this for precise element discovery when `get_page_summary` is not enough.
+
+---
+
+#### `take_screenshot`
+**Params:** none
+**CLI:** `.venv/bin/python cli/main.py autopilot browser take_screenshot`
+**Response:** `{ screenshot_id: string, url: string, image_url: string }`
+Uploads the screenshot to the backend. Use sparingly.
+
+---
+
+#### `eval_js`
+**Params:** `code` (required, string — JavaScript code to evaluate)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser eval_js code="return document.title"`
+**Response:** `{ success: true, result: any }` or `{ success: false, error: string }`
+**Note:** Blocked by CSP on many sites (Google, etc.). Prefer other commands when possible.
+
+---
+
 ## Decision Flow
 
 ```
@@ -268,7 +423,8 @@ Start
   |
   Step 0: Gather website URL, credentials, task description
   |
-  Step 2: Create workflow session + capture session, start capture
+  Step 2: autopilot start-capture "<name>" "<url>"
+  |        --> note workflow_session_id + capture_session_id
   |
   Step 3: Navigate to website
   |
@@ -277,18 +433,18 @@ Start
   |
   Step 5: Perform task (read page, decide, act, repeat)
   |
+  +-- Complex UI? --> Use strategies from "Handling Complex UIs"
+  +-- Action failed? --> Follow "Retry and Fallback Strategy"
   +-- MFA/captcha? --> Ask user to complete, wait, resume
   +-- Dangerous button? --> Check allowed list, ask if unsure
   |
-  Step 6: Stop capture
+  Step 6: autopilot stop-capture <wf_id> <cs_id>
+  |   +-- No HAR? --> Tell user, suggest /noui-record-workflow
   |
-  Step 7: Verify HAR captured
-  |   +-- No HAR? --> Tell user, suggest re-recording manually
+  Step 7: autopilot export <wf_id> <cs_id>
+  |   +-- 0 tools? --> Warn user, site may use server-side rendering
   |
-  Step 8: Export MCP
-  |   +-- 0 tools? --> Warn user, capture may not have API calls
-  |
-  Step 9: Install + report
+  Step 8: Install + report
 ```
 
 ---
@@ -302,7 +458,12 @@ Start
 | HAR file not found after stop | Extension may not have uploaded — wait longer, check `workflow captures` |
 | 0 tools after export | The workflow only recorded HTML pages, not API calls — the site may use server-side rendering |
 | Login redirect loop | The session cookie may not persist — check if the extension is on the same tab |
-| `click_by_text` says "not found" | Try `get_page_summary` to see exact element text, use `click_element` with selector instead |
+| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, use `click_element` with selector instead |
+| Autocomplete dropdown not visible in `get_page_summary` | Use `query_elements` with `[role="option"]` or `[role="listbox"]` selectors, or `take_screenshot` to see the dropdown |
+| Date picker not responding to `type_text` | Click the date field first to open the picker, then navigate using the picker's UI controls |
+| `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Click it to open, then `click_by_text` on the desired option |
+| `eval_js` returns CSP error | Use `click_element`, `type_text`, `press_key` instead — these go through the extension content script |
+| Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
 
 ---
 
@@ -312,9 +473,9 @@ Start
 |---------|-------------|
 | `.venv/bin/python cli/main.py start` | Start backend |
 | `.venv/bin/python cli/main.py status` | Check backend health |
-| `.venv/bin/python cli/main.py workflow record <name> <url>` | Create workflow session |
-| `.venv/bin/python cli/main.py workflow captures` | List capture sessions |
-| `.venv/bin/python cli/main.py workflow export-mcp <id> --capture-session <cap_id>` | Export to MCP |
+| `.venv/bin/python cli/main.py autopilot start-capture <name> <url>` | Create workflow + capture sessions and start recording |
+| `.venv/bin/python cli/main.py autopilot stop-capture <wf_id> <cs_id>` | Stop capture, complete workflow, wait for HAR |
+| `.venv/bin/python cli/main.py autopilot export <wf_id> <cs_id>` | Validate HAR and export MCP server |
 | `.venv/bin/python cli/main.py autopilot browser <cmd> [args]` | Execute browser command |
 | `.venv/bin/python cli/main.py autopilot list` | List autopilot runs |
 | `.venv/bin/python cli/main.py autopilot status <run_id>` | Show run details |
