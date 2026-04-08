@@ -1041,10 +1041,13 @@ def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
 
     print(f"Creating workflow session '{name}' …", end=" ", flush=True)
     try:
-        wf = _http("POST", "/workflow-sessions", {"name": name, "start_url": url, "description": name})
+        wf = _http(
+            "POST", "/workflow-sessions", {"name": name, "start_url": url, "description": name}
+        )
     except RuntimeError as exc:
         print(_red(f"\nFailed: {exc}"))
         return 1
+    assert isinstance(wf, dict)
     wf_id = wf["id"]
     process_id = wf["process_id"]
     project_id = wf["project_id"]
@@ -1059,14 +1062,19 @@ def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
 
     # Create capture session
     try:
-        cs = _http("POST", f"/processes/{process_id}/capture-sessions", {
-            "click_tracking": True,
-            "url_monitoring": True,
-            "har_capture": True,
-        })
+        cs = _http(
+            "POST",
+            f"/processes/{process_id}/capture-sessions",
+            {
+                "click_tracking": True,
+                "url_monitoring": True,
+                "har_capture": True,
+            },
+        )
     except RuntimeError as exc:
         print(_red(f"Failed to create capture session: {exc}"))
         return 1
+    assert isinstance(cs, dict)
     cs_id = cs["id"]
 
     # Start capture session (PUT)
@@ -1086,34 +1094,67 @@ def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
     # Start HAR + click tracking via extension (best effort)
     har_started = False
     try:
-        result = _http("POST", "/browser-commands/execute", {
-            "command_type": "start_capture_session",
-            "params": {
-                "projectId": project_id,
-                "processId": process_id,
-                "captureSessionId": cs_id,
+        _http(
+            "POST",
+            "/browser-commands/execute",
+            {
+                "command_type": "start_capture_session",
+                "params": {
+                    "projectId": project_id,
+                    "processId": process_id,
+                    "captureSessionId": cs_id,
+                },
             },
-        }, timeout=10)
+            timeout=10,
+        )
         har_started = True
     except Exception:
         # Fallback: try individual commands
         try:
-            _http("POST", "/browser-commands/execute", {
-                "command_type": "set_capture_state",
-                "params": {"projectId": project_id, "processId": process_id, "captureSessionId": cs_id},
-            }, timeout=10)
-            _http("POST", "/browser-commands/execute", {
-                "command_type": "start_har_capture",
-                "params": {"captureSessionId": cs_id},
-            }, timeout=10)
-            _http("POST", "/browser-commands/execute", {
-                "command_type": "inject_click_tracker",
-                "params": {},
-            }, timeout=10)
-            _http("POST", "/browser-commands/execute", {
-                "command_type": "start_url_monitoring",
-                "params": {"projectId": project_id, "processId": process_id, "captureSessionId": cs_id},
-            }, timeout=10)
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "set_capture_state",
+                    "params": {
+                        "projectId": project_id,
+                        "processId": process_id,
+                        "captureSessionId": cs_id,
+                    },
+                },
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "start_har_capture",
+                    "params": {"captureSessionId": cs_id},
+                },
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "inject_click_tracker",
+                    "params": {},
+                },
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "start_url_monitoring",
+                    "params": {
+                        "projectId": project_id,
+                        "processId": process_id,
+                        "captureSessionId": cs_id,
+                    },
+                },
+                timeout=10,
+            )
             har_started = True
         except Exception as exc:
             print(_yellow(f"  Extension not responding — HAR capture not started: {exc}"))
@@ -1152,10 +1193,15 @@ def cmd_autopilot_stop_capture(args: argparse.Namespace) -> int:
     # Stop extension capture (HAR upload happens here)
     print("Stopping extension capture …", end=" ", flush=True)
     try:
-        _http("POST", "/browser-commands/execute", {
-            "command_type": "stop_capture_session",
-            "params": {"captureSessionId": cs_id},
-        }, timeout=35)
+        _http(
+            "POST",
+            "/browser-commands/execute",
+            {
+                "command_type": "stop_capture_session",
+                "params": {"captureSessionId": cs_id},
+            },
+            timeout=35,
+        )
         print(_green("done"))
     except Exception:
         print(_yellow("skipped (extension not responding)"))
@@ -1295,18 +1341,32 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
                     params[primary] = arg
                 else:
                     # For type_into_label: first arg=label, second arg=text
-                    if cmd_type == "type_into_label" and "label" in params and "text" not in params:
+                    if (
+                        cmd_type == "type_into_label"
+                        and "label" in params
+                        and "text" not in params
+                        or cmd_type == "type_text"
+                        and "selector" in params
+                        and "text" not in params
+                    ):
                         params["text"] = arg
-                    elif cmd_type == "type_text" and "selector" in params and "text" not in params:
-                        params["text"] = arg
-                    elif cmd_type == "select_option" and "selector" in params and "value" not in params:
+                    elif (
+                        cmd_type == "select_option"
+                        and "selector" in params
+                        and "value" not in params
+                    ):
                         params["value"] = arg
 
     try:
-        result = _http("POST", "/browser-commands/execute", {
-            "command_type": cmd_type,
-            "params": params,
-        }, timeout=35)
+        result = _http(
+            "POST",
+            "/browser-commands/execute",
+            {
+                "command_type": cmd_type,
+                "params": params,
+            },
+            timeout=35,
+        )
         print(json.dumps(result, indent=2))
         return 0
     except RuntimeError as exc:
@@ -1361,11 +1421,22 @@ def cmd_autopilot_status(args: argparse.Namespace) -> int:
     print(_bold(f"Autopilot Run {run_id}"))
     print()
     for key in [
-        "status", "website_url", "login_url", "task_description",
-        "success_condition", "stop_condition", "tabby_profile_id",
-        "workflow_session_id", "capture_session_id", "server_id",
-        "mcp_output_path", "tools_count", "failure_reason",
-        "created_at", "updated_at", "completed_at",
+        "status",
+        "website_url",
+        "login_url",
+        "task_description",
+        "success_condition",
+        "stop_condition",
+        "tabby_profile_id",
+        "workflow_session_id",
+        "capture_session_id",
+        "server_id",
+        "mcp_output_path",
+        "tools_count",
+        "failure_reason",
+        "created_at",
+        "updated_at",
+        "completed_at",
     ]:
         val = result.get(key, "")
         if val:
@@ -1373,8 +1444,6 @@ def cmd_autopilot_status(args: argparse.Namespace) -> int:
             print(f"  {label:<25}: {val}")
 
     return 0
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -3166,11 +3235,15 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_status.add_argument("run_id", help="Autopilot run ID")
 
     # Capture lifecycle
-    ap_start = ap_sub.add_parser("start-capture", help="Create sessions and start HAR + click capture")
+    ap_start = ap_sub.add_parser(
+        "start-capture", help="Create sessions and start HAR + click capture"
+    )
     ap_start.add_argument("name", help="Workflow name")
     ap_start.add_argument("url", help="Website start URL")
 
-    ap_stop = ap_sub.add_parser("stop-capture", help="Stop capture, complete workflow, wait for HAR upload")
+    ap_stop = ap_sub.add_parser(
+        "stop-capture", help="Stop capture, complete workflow, wait for HAR upload"
+    )
     ap_stop.add_argument("workflow_session_id", help="Workflow session ID (from start-capture)")
     ap_stop.add_argument("capture_session_id", help="Capture session ID (from start-capture)")
 
@@ -3181,8 +3254,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Browser command passthrough — lets Claude Code drive the browser from the CLI
     ap_browser = ap_sub.add_parser("browser", help="Execute a browser command via the extension")
-    ap_browser.add_argument("browser_command", help="Command type (e.g. get_page_info, click_element, navigate)")
-    ap_browser.add_argument("browser_args", nargs="*", default=[], help="Command arguments as key=value pairs or positional values")
+    ap_browser.add_argument(
+        "browser_command", help="Command type (e.g. get_page_info, click_element, navigate)"
+    )
+    ap_browser.add_argument(
+        "browser_args",
+        nargs="*",
+        default=[],
+        help="Command arguments as key=value pairs or positional values",
+    )
 
     # --- tabby ---
     tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")

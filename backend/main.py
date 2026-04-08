@@ -22,6 +22,9 @@ import backend.elicitation.models  # noqa: F401
 # ── Register all ORM models so their tables are created on startup ────────────
 import backend.login.models  # noqa: F401
 import backend.workflow.models  # noqa: F401
+
+# ── NoUI-specific routers ─────────────────────────────────────────────────────
+from backend.autopilot.router import router as autopilot_router
 from backend.config import settings
 from backend.database import Base, engine
 from backend.elicitation.routers.attachments import router as attachments_router
@@ -41,9 +44,6 @@ from backend.elicitation.routers.questions import router as questions_router
 from backend.elicitation.routers.screenshots import router as screenshots_router
 from backend.elicitation.routers.timeline import router as timeline_router
 from backend.elicitation.routers.url_events import router as elicitation_url_events_router
-
-# ── NoUI-specific routers ─────────────────────────────────────────────────────
-from backend.autopilot.router import router as autopilot_router
 from backend.login.router import router as login_router
 
 # ── Shared routers (HAR upload only — clicks/url_events handled by elicitation) ──

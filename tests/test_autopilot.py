@@ -24,7 +24,11 @@ if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
 from backend.autopilot.capture_validator import validate_har
-from backend.autopilot.controller import derive_app_slug, derive_workflow_name, normalize_request_fields
+from backend.autopilot.controller import (
+    derive_app_slug,
+    derive_workflow_name,
+    normalize_request_fields,
+)
 from backend.autopilot.credentials import (
     clear_credentials,
     get_credentials,
@@ -138,7 +142,9 @@ def test_derive_app_slug():
 
 def test_derive_workflow_name():
     assert derive_workflow_name("Create a draft invoice") == "Create a draft invoice"
-    name = derive_workflow_name("Create a draft invoice for Acme Corp for one hundred dollars due next Friday")
+    name = derive_workflow_name(
+        "Create a draft invoice for Acme Corp for one hundred dollars due next Friday"
+    )
     assert name.endswith("...")
     assert len(name.split()) <= 7  # 6 words + "..."
 
@@ -196,11 +202,15 @@ def test_redact_dict():
 def test_validate_valid_api_capture():
     """HAR with JSON API calls should pass."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry("GET", "https://api.example.com/invoices", 200),
-            _entry("POST", "https://api.example.com/invoices", 201, post_body='{"amount": 100}'),
-            _entry("GET", "https://api.example.com/customers", 200),
-        ])
+        har = _har(
+            [
+                _entry("GET", "https://api.example.com/invoices", 200),
+                _entry(
+                    "POST", "https://api.example.com/invoices", 201, post_body='{"amount": 100}'
+                ),
+                _entry("GET", "https://api.example.com/customers", 200),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name, "https://api.example.com")
 
@@ -212,11 +222,18 @@ def test_validate_valid_api_capture():
 def test_validate_no_api_calls():
     """HAR with only static assets should fail."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry("GET", "https://example.com/style.css", 200, resp_content_type="text/css"),
-            _entry("GET", "https://example.com/app.js", 200, resp_content_type="application/javascript"),
-            _entry("GET", "https://example.com/logo.png", 200, resp_content_type="image/png"),
-        ])
+        har = _har(
+            [
+                _entry("GET", "https://example.com/style.css", 200, resp_content_type="text/css"),
+                _entry(
+                    "GET",
+                    "https://example.com/app.js",
+                    200,
+                    resp_content_type="application/javascript",
+                ),
+                _entry("GET", "https://example.com/logo.png", 200, resp_content_type="image/png"),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name)
 
@@ -228,13 +245,17 @@ def test_validate_no_api_calls():
 def test_validate_credential_leak():
     """HAR with password-like keys in POST body should warn."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry(
-                "POST", "https://api.example.com/auth/login", 200,
-                post_body='{"username": "admin", "password": "secret123"}',
-            ),
-            _entry("GET", "https://api.example.com/dashboard", 200),
-        ])
+        har = _har(
+            [
+                _entry(
+                    "POST",
+                    "https://api.example.com/auth/login",
+                    200,
+                    post_body='{"username": "admin", "password": "secret123"}',
+                ),
+                _entry("GET", "https://api.example.com/dashboard", 200),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name)
 
@@ -245,11 +266,18 @@ def test_validate_credential_leak():
 def test_validate_unrelated_domain():
     """HAR with requests to unrelated domains should warn."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry("POST", "https://api.example.com/data", 200, post_body='{"key": "val"}'),
-            _entry("GET", "https://analytics.google.com/track", 200),
-            _entry("GET", "https://cdn.jsdelivr.net/npm/react", 200, resp_content_type="application/javascript"),
-        ])
+        har = _har(
+            [
+                _entry("POST", "https://api.example.com/data", 200, post_body='{"key": "val"}'),
+                _entry("GET", "https://analytics.google.com/track", 200),
+                _entry(
+                    "GET",
+                    "https://cdn.jsdelivr.net/npm/react",
+                    200,
+                    resp_content_type="application/javascript",
+                ),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name, "https://api.example.com")
 
@@ -278,10 +306,12 @@ def test_validate_missing_file():
 def test_validate_no_mutation_calls():
     """HAR with only GET API calls should warn about no mutations."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry("GET", "https://api.example.com/users", 200),
-            _entry("GET", "https://api.example.com/products", 200),
-        ])
+        har = _har(
+            [
+                _entry("GET", "https://api.example.com/users", 200),
+                _entry("GET", "https://api.example.com/products", 200),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name)
 
@@ -292,14 +322,18 @@ def test_validate_no_mutation_calls():
 def test_validate_form_param_credential_leak():
     """HAR with password= in form params should warn."""
     with tempfile.NamedTemporaryFile(suffix=".har", delete=False, mode="w") as f:
-        har = _har([
-            _entry(
-                "POST", "https://example.com/login", 302,
-                post_body="username=admin&password=secret",
-                post_content_type="application/x-www-form-urlencoded",
-            ),
-            _entry("GET", "https://example.com/api/data", 200),
-        ])
+        har = _har(
+            [
+                _entry(
+                    "POST",
+                    "https://example.com/login",
+                    302,
+                    post_body="username=admin&password=secret",
+                    post_content_type="application/x-www-form-urlencoded",
+                ),
+                _entry("GET", "https://example.com/api/data", 200),
+            ]
+        )
         _write_har(Path(f.name), har)
         result = validate_har(f.name)
 

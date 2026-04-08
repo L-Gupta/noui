@@ -99,6 +99,7 @@ module = [
     "backend.login.router",
     "backend.workflow.router",
     "backend.shared.routers.*",
+    "backend.autopilot.router",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -113,6 +114,15 @@ module = [
     "backend.elicitation.routers.documents",
     "backend.elicitation.claude_client",
 ]
+ignore_errors = true
+
+# Tests and fixtures — no strict typing required.
+[[tool.mypy.overrides]]
+module = [
+    "tests.*",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
 ignore_errors = true
 
 # ---------------------------------------------------------------------------

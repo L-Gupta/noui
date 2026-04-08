@@ -74,10 +74,16 @@ def _wait_alive(base: str, label: str, timeout: int = 15) -> None:
 
 def _browser_cmd(command_type: str, params: dict | None = None, timeout: int = 35) -> dict:
     """Execute a browser command via the synchronous endpoint."""
-    return _http("POST", _NOUI_URL, "/browser-commands/execute", {
-        "command_type": command_type,
-        "params": params or {},
-    }, timeout=timeout)
+    return _http(
+        "POST",
+        _NOUI_URL,
+        "/browser-commands/execute",
+        {
+            "command_type": command_type,
+            "params": params or {},
+        },
+        timeout=timeout,
+    )
 
 
 def _extension_connected() -> bool:
@@ -96,8 +102,12 @@ def _extension_connected() -> bool:
 
 def _start_toyapp() -> subprocess.Popen:
     proc = subprocess.Popen(
-        [str(_NOUI_ROOT / ".venv" / "bin" / "python"), str(_NOUI_ROOT / "tests" / "toyapp" / "app.py"),
-         "--port", str(_TOYAPP_PORT)],
+        [
+            str(_NOUI_ROOT / ".venv" / "bin" / "python"),
+            str(_NOUI_ROOT / "tests" / "toyapp" / "app.py"),
+            "--port",
+            str(_TOYAPP_PORT),
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=str(_NOUI_ROOT),
@@ -151,13 +161,14 @@ def test_toyapp_health(toyapp):
 def test_toyapp_login_flow(toyapp):
     """ToyApp login returns a session cookie."""
     import http.cookiejar
+
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
     data = urllib.parse.urlencode({"username": "testuser", "password": "testpass"}).encode()
     req = urllib.request.Request(f"{_TOYAPP_URL}/api/login", data=data, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    resp = opener.open(req, timeout=10)
+    opener.open(req, timeout=10)
 
     cookies = {c.name: c.value for c in jar}
     assert "toyapp_session" in cookies
@@ -191,10 +202,15 @@ def test_browser_execute_endpoint_exists(toyapp, noui_backend):
 @pytest.mark.e2e
 def test_create_autopilot_run_record(toyapp, noui_backend):
     """Can create an autopilot run record via the API."""
-    result = _http("POST", _NOUI_URL, "/autopilot-recordings", {
-        "website_url": f"http://localhost:{_TOYAPP_PORT}",
-        "task_description": "Create a test note",
-    })
+    result = _http(
+        "POST",
+        _NOUI_URL,
+        "/autopilot-recordings",
+        {
+            "website_url": f"http://localhost:{_TOYAPP_PORT}",
+            "task_description": "Create a test note",
+        },
+    )
     assert result["id"]
     assert result["status"] == "queued"
     assert result["website_url"] == f"http://localhost:{_TOYAPP_PORT}"
@@ -212,11 +228,16 @@ def test_create_autopilot_run_record(toyapp, noui_backend):
 def test_create_workflow_and_capture_session(toyapp, noui_backend):
     """Can create workflow + capture sessions (the setup phase of autopilot)."""
     # Create workflow session
-    wf = _http("POST", _NOUI_URL, "/workflow-sessions", {
-        "name": "E2E Test Note",
-        "start_url": f"http://localhost:{_TOYAPP_PORT}",
-        "description": "Create a test note in ToyApp",
-    })
+    wf = _http(
+        "POST",
+        _NOUI_URL,
+        "/workflow-sessions",
+        {
+            "name": "E2E Test Note",
+            "start_url": f"http://localhost:{_TOYAPP_PORT}",
+            "description": "Create a test note in ToyApp",
+        },
+    )
     assert wf["id"]
     assert wf["process_id"]
     assert wf["project_id"]
@@ -228,11 +249,16 @@ def test_create_workflow_and_capture_session(toyapp, noui_backend):
     assert wf_started["status"] == "recording"
 
     # Create capture session
-    cs = _http("POST", _NOUI_URL, f"/processes/{process_id}/capture-sessions", {
-        "click_tracking": True,
-        "url_monitoring": True,
-        "har_capture": True,
-    })
+    cs = _http(
+        "POST",
+        _NOUI_URL,
+        f"/processes/{process_id}/capture-sessions",
+        {
+            "click_tracking": True,
+            "url_monitoring": True,
+            "har_capture": True,
+        },
+    )
     assert cs["id"]
     capture_session_id = cs["id"]
 
@@ -267,19 +293,31 @@ def test_full_autopilot_with_browser(toyapp, noui_backend):
     _http("POST", _TOYAPP_URL, "/api/reset")
 
     # 1. Create workflow + capture session
-    wf = _http("POST", _NOUI_URL, "/workflow-sessions", {
-        "name": "Autopilot E2E",
-        "start_url": f"http://localhost:{_TOYAPP_PORT}",
-        "description": "Create a note via autopilot",
-    })
+    wf = _http(
+        "POST",
+        _NOUI_URL,
+        "/workflow-sessions",
+        {
+            "name": "Autopilot E2E",
+            "start_url": f"http://localhost:{_TOYAPP_PORT}",
+            "description": "Create a note via autopilot",
+        },
+    )
     workflow_session_id = wf["id"]
     process_id = wf["process_id"]
 
     _http("POST", _NOUI_URL, f"/workflow-sessions/{workflow_session_id}/start")
 
-    cs = _http("POST", _NOUI_URL, f"/processes/{process_id}/capture-sessions", {
-        "click_tracking": True, "url_monitoring": True, "har_capture": True,
-    })
+    cs = _http(
+        "POST",
+        _NOUI_URL,
+        f"/processes/{process_id}/capture-sessions",
+        {
+            "click_tracking": True,
+            "url_monitoring": True,
+            "har_capture": True,
+        },
+    )
     capture_session_id = cs["id"]
     _http("PUT", _NOUI_URL, f"/capture-sessions/{capture_session_id}/start")
 
@@ -328,10 +366,13 @@ def test_full_autopilot_with_browser(toyapp, noui_backend):
     # 8. Export MCP
     print("  Exporting MCP...")
     try:
-        manifest = _http("POST", _NOUI_URL,
+        manifest = _http(
+            "POST",
+            _NOUI_URL,
             f"/workflow-sessions/{workflow_session_id}/export-mcp"
             f"?capture_session_id={capture_session_id}",
-            timeout=30)
+            timeout=30,
+        )
         server_id = manifest.get("server_id", "")
         tools_count = manifest.get("tools_count", 0)
         print(f"  Server ID: {server_id}")
@@ -376,14 +417,18 @@ def _run_standalone():
         if not _extension_connected():
             print("   Extension not connected.")
             print("   You can test manually with the skill:")
-            print(f"   Tell Claude Code: /noui-autopilot")
+            print("   Tell Claude Code: /noui-autopilot")
             print(f"   Website: http://localhost:{_TOYAPP_PORT}")
-            print(f"   Credentials: testuser / testpass")
-            print(f"   Task: Create a note titled 'Test Note' with body 'Hello World'")
+            print("   Credentials: testuser / testpass")
+            print("   Task: Create a note titled 'Test Note' with body 'Hello World'")
             print("\n   Or drive the browser yourself:")
-            print(f"   .venv/bin/python cli/main.py autopilot browser navigate url=http://localhost:{_TOYAPP_PORT}/login")
-            print(f"   .venv/bin/python cli/main.py autopilot browser get_page_summary")
-            print(f"   .venv/bin/python cli/main.py autopilot browser type_into_label label=Username text=testuser")
+            print(
+                f"   .venv/bin/python cli/main.py autopilot browser navigate url=http://localhost:{_TOYAPP_PORT}/login"
+            )
+            print("   .venv/bin/python cli/main.py autopilot browser get_page_summary")
+            print(
+                "   .venv/bin/python cli/main.py autopilot browser type_into_label label=Username text=testuser"
+            )
             print("\n   Press Ctrl+C to stop ToyApp")
             try:
                 toyapp_proc.wait()
@@ -397,14 +442,26 @@ def _run_standalone():
         # (Same flow as test_full_autopilot_with_browser but inline)
         _http("POST", _TOYAPP_URL, "/api/reset")
 
-        wf = _http("POST", _NOUI_URL, "/workflow-sessions", {
-            "name": "Standalone E2E",
-            "start_url": f"http://localhost:{_TOYAPP_PORT}",
-        })
+        wf = _http(
+            "POST",
+            _NOUI_URL,
+            "/workflow-sessions",
+            {
+                "name": "Standalone E2E",
+                "start_url": f"http://localhost:{_TOYAPP_PORT}",
+            },
+        )
         _http("POST", _NOUI_URL, f"/workflow-sessions/{wf['id']}/start")
-        cs = _http("POST", _NOUI_URL, f"/processes/{wf['process_id']}/capture-sessions", {
-            "click_tracking": True, "url_monitoring": True, "har_capture": True,
-        })
+        cs = _http(
+            "POST",
+            _NOUI_URL,
+            f"/processes/{wf['process_id']}/capture-sessions",
+            {
+                "click_tracking": True,
+                "url_monitoring": True,
+                "har_capture": True,
+            },
+        )
         _http("PUT", _NOUI_URL, f"/capture-sessions/{cs['id']}/start")
 
         _browser_cmd("navigate", {"url": f"http://localhost:{_TOYAPP_PORT}/login"})
@@ -433,9 +490,14 @@ def _run_standalone():
             return 1
 
         try:
-            manifest = _http("POST", _NOUI_URL,
-                f"/workflow-sessions/{wf['id']}/export-mcp?capture_session_id={cs['id']}")
-            print(f"   PASS: MCP exported — server_id={manifest.get('server_id')}, tools={manifest.get('tools_count')}")
+            manifest = _http(
+                "POST",
+                _NOUI_URL,
+                f"/workflow-sessions/{wf['id']}/export-mcp?capture_session_id={cs['id']}",
+            )
+            print(
+                f"   PASS: MCP exported — server_id={manifest.get('server_id')}, tools={manifest.get('tools_count')}"
+            )
         except Exception as exc:
             print(f"   WARN: MCP export failed (HAR may not have captured): {exc}")
 

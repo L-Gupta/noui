@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import threading
+from typing import Any
 
 _lock = threading.Lock()
 _store: dict[str, dict[str, str]] = {}
@@ -56,7 +57,7 @@ def redact_dict(data: dict, run_id: str) -> dict:
     if creds:
         cred_values = {v for v in creds.values() if v and len(v) >= 2}
 
-    def _walk(obj):
+    def _walk(obj: Any) -> Any:
         if isinstance(obj, dict):
             out = {}
             for k, v in obj.items():

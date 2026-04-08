@@ -15,13 +15,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import secrets
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, Form, HTTPException, Request, Response
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -39,13 +37,15 @@ def _reset_state() -> None:
     """Reset for test isolation."""
     sessions.clear()
     notes.clear()
-    notes.append({
-        "id": str(uuid.uuid4()),
-        "title": "Welcome note",
-        "body": "This is a sample note created at startup.",
-        "created_by": "system",
-        "created_at": datetime.now(UTC).isoformat(),
-    })
+    notes.append(
+        {
+            "id": str(uuid.uuid4()),
+            "title": "Welcome note",
+            "body": "This is a sample note created at startup.",
+            "created_by": "system",
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
 
 
 _reset_state()
@@ -147,7 +147,9 @@ async def login_page(request: Request, error: str = ""):
         return RedirectResponse("/", status_code=302)
 
     error_html = f'<p class="error">{error}</p>' if error else ""
-    return _page("Login", f"""
+    return _page(
+        "Login",
+        f"""
         <div class="card">
           <h1>Login</h1>
           {error_html}
@@ -164,7 +166,8 @@ async def login_page(request: Request, error: str = ""):
         <p style="margin-top:12px; color:#888; font-size:13px;">
           Test credentials: <code>testuser</code> / <code>testpass</code>
         </p>
-    """)
+    """,
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -174,15 +177,17 @@ async def dashboard(request: Request):
     for note in reversed(notes):
         notes_html += f"""
         <div class="note">
-          <h3>{note['title']}</h3>
-          <p>{note['body']}</p>
-          <small>by {note['created_by']} at {note['created_at'][:19]}</small>
+          <h3>{note["title"]}</h3>
+          <p>{note["body"]}</p>
+          <small>by {note["created_by"]} at {note["created_at"][:19]}</small>
         </div>"""
 
     if not notes:
         notes_html = '<p style="color:#888;">No notes yet. Create one!</p>'
 
-    return _page("Dashboard", f"""
+    return _page(
+        "Dashboard",
+        f"""
         <nav>
           <strong>ToyApp</strong>
           <a href="/">Dashboard</a>
@@ -194,14 +199,17 @@ async def dashboard(request: Request):
         <div class="card">
           {notes_html}
         </div>
-    """)
+    """,
+    )
 
 
 @app.get("/notes/new", response_class=HTMLResponse)
 async def new_note_page(request: Request, success: str = ""):
     user = request.state.user
     success_html = f'<p class="success">{success}</p>' if success else ""
-    return _page("New Note", f"""
+    return _page(
+        "New Note",
+        f"""
         <nav>
           <strong>ToyApp</strong>
           <a href="/">Dashboard</a>
@@ -220,7 +228,8 @@ async def new_note_page(request: Request, success: str = ""):
             <button type="submit">Save Note</button>
           </form>
         </div>
-    """)
+    """,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -310,5 +319,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(f"ToyApp starting on http://{args.host}:{args.port}")
-    print(f"Login: testuser / testpass")
+    print("Login: testuser / testpass")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

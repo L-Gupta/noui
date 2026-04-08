@@ -100,10 +100,19 @@ async def update_autopilot_run(
     """Partial update a run (used by CLI to update status, session IDs, etc.)."""
     run = await _get_run(run_id, db)
     allowed_fields = {
-        "status", "login_url", "success_condition", "stop_condition",
-        "tabby_profile_id", "login_session_id", "workflow_session_id",
-        "capture_session_id", "server_id", "mcp_output_path", "agent_trace_path",
-        "tools_count", "failure_reason",
+        "status",
+        "login_url",
+        "success_condition",
+        "stop_condition",
+        "tabby_profile_id",
+        "login_session_id",
+        "workflow_session_id",
+        "capture_session_id",
+        "server_id",
+        "mcp_output_path",
+        "agent_trace_path",
+        "tools_count",
+        "failure_reason",
     }
     for key, value in data.items():
         if key in allowed_fields:
@@ -145,9 +154,12 @@ async def start_capture(data: CaptureControlIn):
     # not a command handler.  We replicate its steps here.
     try:
         # 1. Set capture state (so click events get tagged)
-        await execute_command("eval_js", {
-            "code": "document.title"  # no-op to verify extension is alive
-        })
+        await execute_command(
+            "eval_js",
+            {
+                "code": "document.title"  # no-op to verify extension is alive
+            },
+        )
     except TimeoutError as exc:
         raise HTTPException(
             504,
@@ -161,16 +173,19 @@ async def start_capture(data: CaptureControlIn):
     # Inject click tracker
     if tab_id:
         try:
-            await execute_command("eval_js", {
-                "code": (
-                    "if (!window.__adoptClickTracker) {"
-                    "  let s = document.createElement('script');"
-                    "  s.src = chrome.runtime.getURL('content/click-tracker.js');"
-                    "  document.head.appendChild(s);"
-                    "}"
-                    "return {injected: true};"
-                )
-            })
+            await execute_command(
+                "eval_js",
+                {
+                    "code": (
+                        "if (!window.__adoptClickTracker) {"
+                        "  let s = document.createElement('script');"
+                        "  s.src = chrome.runtime.getURL('content/click-tracker.js');"
+                        "  document.head.appendChild(s);"
+                        "}"
+                        "return {injected: true};"
+                    )
+                },
+            )
         except Exception:
             pass  # click tracker injection is best-effort here
 

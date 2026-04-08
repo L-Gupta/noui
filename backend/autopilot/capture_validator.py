@@ -30,8 +30,21 @@ class ValidationResult:
 
 # Extensions that are almost certainly static assets, not API calls.
 _STATIC_EXTENSIONS = {
-    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".avif",
+    ".js",
+    ".css",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".map",
+    ".webp",
+    ".avif",
 }
 
 # Keys whose values look like credentials.
@@ -74,10 +87,7 @@ def _is_api_call(entry: dict) -> bool:
             return True
 
     # GET with /api/ in path
-    if "/api/" in path or path.startswith("/graphql"):
-        return True
-
-    return False
+    return "/api/" in path or path.startswith("/graphql")
 
 
 def _check_credential_leak(entry: dict) -> str | None:
@@ -174,9 +184,7 @@ def validate_har(
                 f"Captured domains: {', '.join(sorted(seen_domains))}"
             )
         if unrelated:
-            result.warn(
-                f"Capture includes unrelated domains: {', '.join(sorted(unrelated))}"
-            )
+            result.warn(f"Capture includes unrelated domains: {', '.join(sorted(unrelated))}")
 
     # 6. Check for credential leaks
     for entry in api_entries:
@@ -193,9 +201,9 @@ def validate_har(
 
     # 8. Check for mutation calls (POST/PUT/PATCH/DELETE)
     mutation_count = sum(
-        1 for e in api_entries
-        if e.get("request", {}).get("method", "GET").upper()
-        in ("POST", "PUT", "PATCH", "DELETE")
+        1
+        for e in api_entries
+        if e.get("request", {}).get("method", "GET").upper() in ("POST", "PUT", "PATCH", "DELETE")
     )
     if mutation_count == 0:
         result.warn(
