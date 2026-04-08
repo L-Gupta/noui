@@ -3500,9 +3500,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "verify-extension", help="Pre-flight check: verify extension supports all browser commands"
     )
 
-    ap_capstatus = ap_sub.add_parser(
-        "capture-status", help="Show live status of a capture session"
-    )
+    ap_capstatus = ap_sub.add_parser("capture-status", help="Show live status of a capture session")
     ap_capstatus.add_argument("capture_session_id", help="Capture session ID")
 
     ap_resume = ap_sub.add_parser(
