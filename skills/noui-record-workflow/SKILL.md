@@ -70,19 +70,28 @@ Examples:
 .venv/bin/python cli/main.py workflow record "Fetch Posts" "https://jsonplaceholder.typicode.com"
 ```
 
-The CLI creates a session and prints the `session_id`. Note it.
+The CLI creates a workflow session and prints the `session_id`. Note it — you need it for export.
+
+The backend also creates an **App** (project) and **Process** that will appear in the Chrome extension. The App name is based on the URL hostname (e.g., `app.hubspot.com`). You do NOT need to create these manually in the extension.
 
 ---
 
 ## Step 3 — Record in Chrome
 
+The CLI already created an App and Process in the backend. The extension should see them automatically.
+
 Tell the user to perform these steps in the **NoUI Workflow Recorder** extension:
 
 1. Click the extension icon in the Chrome toolbar
-2. Create a **Project** (or select an existing one)
-3. Click **Start Capture** to begin recording
-4. Perform the complete workflow you want to automate
-5. Click **Stop** when done
+2. The App created by `workflow record` should appear in the extension's App list — **select it**
+   - If you don't see it, click the refresh/reload button in the extension, or close and reopen the popup
+   - The App name matches the URL hostname from the `workflow record` command
+3. Select the **Process** under that App (there should be one matching your workflow name)
+4. Click **Start Capture** to begin recording
+5. Navigate to the start URL and perform the complete workflow you want to automate
+6. Click **Stop** when done
+
+> **Important:** Do NOT create a new App/Project in the extension. The CLI already created one. Creating a new one will disconnect the capture from the workflow session, and export will fail.
 
 After stopping, get the **capture session ID** from the CLI:
 
@@ -90,7 +99,11 @@ After stopping, get the **capture session ID** from the CLI:
 .venv/bin/python cli/main.py workflow captures
 ```
 
-Lists all capture sessions with their IDs and statuses. Note the `id` of the most recent `stopped` session — that is your `capture_session_id`.
+Lists all capture sessions with their IDs, statuses, and project IDs. Note the `id` of the most recent `stopped` session whose project matches the workflow's project — that is your `capture_session_id`.
+
+> **Tip:** If `workflow captures` shows many sessions, run `workflow list` to find your workflow session and match by `project_id`.
+
+> If no capture sessions appear linked to your workflow's project, the capture was likely recorded under a different App in the extension. Re-record, making sure to select the correct App (the one created by `workflow record`).
 
 > For Path A (authenticated apps): navigate to the authenticated starting point manually before starting capture — credentials are managed separately via Tabby.
 
@@ -173,8 +186,8 @@ Start
   │
   Step 2: workflow record "<Name>" "<url>" → note session_id
   │
-  Step 3: Chrome (Start Capture → perform workflow → Stop)
-    └─ get capture_session_id: workflow captures
+  Step 3: Chrome (select the App created by CLI → Start Capture → perform workflow → Stop)
+    └─ get capture_session_id: workflow captures (match by project_id)
   │
   Step 4:
     Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid> --verify
@@ -220,3 +233,6 @@ Start
 | Tools have unreadable raw API param names (`f_sid`, `bl`, `reqid`) | Run `/noui-generalize` |
 | `API.md` missing from the generated folder | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to generate it |
 | `API.md` is stale after editing `tools.json` | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to refresh |
+| Capture session not linked to workflow (different project_id) | User created a new App in the extension instead of selecting the one created by `workflow record`. Re-record using the correct App. |
+| Extension doesn't show the App created by CLI | Click refresh in the extension popup, or close and reopen it. The backend creates the App immediately on `workflow record`. |
+| `workflow captures` returns empty after recording | The extension may not have been connected to `localhost:8002`. Check that the extension shows "Connected" status and the backend is running. |
