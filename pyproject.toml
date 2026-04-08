@@ -36,6 +36,12 @@ ruff = ">=0.4.0"
 mypy = ">=1.10.0"
 pre-commit = ">=3.7.0"
 
+[tool.poetry.group.test]
+optional = true
+
+[tool.poetry.group.test.dependencies]
+pytest = ">=9.0"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
@@ -78,3 +84,9 @@ warn_return_any = false
 no_implicit_reexport = true
 strict_equality = true
 show_error_codes = true
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
