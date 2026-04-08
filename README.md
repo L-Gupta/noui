@@ -23,9 +23,10 @@ No clicks. No DOM parsing. No brittle automation.
 
 ## ⚡ Why NoUI?
 
-Computer-use agents simulate humans: - 🐢 Slow (UI loops, page loads) -
-💸 Expensive (token-heavy, step-heavy) - 🧱 Fragile (break on UI
-changes)
+Computer-use agents simulate humans:
+- 🐢 Slow (UI loops, page loads)
+- 💸 Expensive (token-heavy, step-heavy)
+- 🧱 Fragile (break on UI changes)
 
 **NoUI executes software directly:**
 - ⚡ **Fast** --- direct API calls
