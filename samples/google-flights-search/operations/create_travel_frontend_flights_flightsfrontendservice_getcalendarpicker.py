@@ -6,11 +6,10 @@ Path: /_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/G
 from __future__ import annotations
 
 import json
-import urllib.parse
 import pathlib
+import urllib.parse
 
 import httpx
-
 from noui_runtime.auth import get_auth_headers
 
 BASE_URL = "https://www.google.com"
@@ -44,13 +43,27 @@ async def execute(
     inner = [
         None,
         [
-            None, None, 1, None, [], 1, [1, 0, 0, 0],
-            None, None, None, None, None, None,
+            None,
+            None,
+            1,
+            None,
+            [],
+            1,
+            [1, 0, 0, 0],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             [
                 [[[[origin_entity_id, 5]]], [[[destination_entity_id, 5]]], None, 0],
                 [[[[destination_entity_id, 5]]], [[[origin_entity_id, 5]]], None, 0],
             ],
-            None, None, None, 1,
+            None,
+            None,
+            None,
+            1,
         ],
         [calendar_start, calendar_end],
         None,

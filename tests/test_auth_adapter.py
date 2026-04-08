@@ -128,9 +128,7 @@ class TestStaticSecretStrategy:
 
     def test_reads_auth_plan_json(self) -> None:
         src = _generated()
-        assert "auth_plan.json" in src, (
-            "Generated auth.py must load strategy from auth_plan.json"
-        )
+        assert "auth_plan.json" in src, "Generated auth.py must load strategy from auth_plan.json"
 
 
 class TestTabbyApiHostConfig:

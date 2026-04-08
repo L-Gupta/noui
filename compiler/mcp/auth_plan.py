@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-
 # ── Constants ────────────────────────────────────────────────────────────────
 
 _AUTH_HEADER_NAMES = frozenset({"authorization", "x-api-key", "x-auth-token"})
@@ -24,6 +23,7 @@ _BEARER_RE = re.compile(r"^Bearer\s+\S+", re.IGNORECASE)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _detect_bearer_scheme(header_value: str) -> str | None:
     """Return 'Bearer' if the value matches Bearer <token>, else None."""
@@ -101,6 +101,7 @@ def _extract_target_domains(har: dict) -> list[str]:
 
 # ── Main generator ───────────────────────────────────────────────────────────
 
+
 def generate_auth_plan(
     har: dict,
     auth_info: dict,
@@ -139,12 +140,14 @@ def generate_auth_plan(
             env_var = _env_var_name(app_slug, header_name)
             scheme = observed.get(header_name, {}).get("scheme")
             value_template = f"{scheme} ${{{env_var}}}" if scheme else f"${{{env_var}}}"
-            fallbacks.append({
-                "type": "static_secret_header",
-                "header": header_name,
-                "value_template": value_template,
-                "secret_env_var": env_var,
-            })
+            fallbacks.append(
+                {
+                    "type": "static_secret_header",
+                    "header": header_name,
+                    "value_template": value_template,
+                    "secret_env_var": env_var,
+                }
+            )
 
     return {
         "profile_slug": profile_slug or app_slug,

@@ -6,30 +6,59 @@ ABCD-compatible ``security_params`` configuration.
 
 from __future__ import annotations
 
-import re
 from collections import Counter
-
 
 # ── Common API-key header names ──────────────────────────────────────────────
 
-_API_KEY_HEADERS = frozenset({
-    "x-api-key", "apikey", "api-key", "x-auth-token",
-    "x-access-token", "x-token",
-})
+_API_KEY_HEADERS = frozenset(
+    {
+        "x-api-key",
+        "apikey",
+        "api-key",
+        "x-auth-token",
+        "x-access-token",
+        "x-token",
+    }
+)
 
-_API_KEY_QUERY_NAMES = frozenset({
-    "api_key", "apikey", "key", "access_token", "token", "auth",
-})
+_API_KEY_QUERY_NAMES = frozenset(
+    {
+        "api_key",
+        "apikey",
+        "key",
+        "access_token",
+        "token",
+        "auth",
+    }
+)
 
 # Headers to ignore when looking for auth (standard non-auth headers)
-_IGNORE_HEADERS = frozenset({
-    "content-type", "accept", "user-agent", "host", "origin",
-    "referer", "accept-encoding", "accept-language", "connection",
-    "cache-control", "pragma", "sec-fetch-dest", "sec-fetch-mode",
-    "sec-fetch-site", "sec-ch-ua", "sec-ch-ua-mobile",
-    "sec-ch-ua-platform", "dnt", "upgrade-insecure-requests",
-    "if-none-match", "if-modified-since", "content-length",
-})
+_IGNORE_HEADERS = frozenset(
+    {
+        "content-type",
+        "accept",
+        "user-agent",
+        "host",
+        "origin",
+        "referer",
+        "accept-encoding",
+        "accept-language",
+        "connection",
+        "cache-control",
+        "pragma",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "dnt",
+        "upgrade-insecure-requests",
+        "if-none-match",
+        "if-modified-since",
+        "content-length",
+    }
+)
 
 
 def detect_auth_patterns(har_entries: list[dict]) -> dict:
@@ -109,10 +138,7 @@ def detect_auth_patterns(har_entries: list[dict]) -> dict:
         if "cookie" in headers and not auth_header:
             cookie_val = headers["cookie"]
             # Session-like cookies suggest cookie auth
-            if any(
-                tok in cookie_val.lower()
-                for tok in ("session", "sid", "auth", "token", "jwt")
-            ):
+            if any(tok in cookie_val.lower() for tok in ("session", "sid", "auth", "token", "jwt")):
                 details["cookie_auth_seen"] = True
                 auth_type_counts["cookie"] += 1
 

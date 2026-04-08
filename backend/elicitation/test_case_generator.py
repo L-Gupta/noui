@@ -56,33 +56,37 @@ def generate_test_cases(
     # Validation
     validation = _derive_validation(expected_output)
 
-    test_cases.append({
-        "test_case_name": tc_name,
-        "prompt": prompt,
-        "workflow_params": workflow_params,
-        "expected_output": expected_output,
-        "validation": validation,
-    })
+    test_cases.append(
+        {
+            "test_case_name": tc_name,
+            "prompt": prompt,
+            "workflow_params": workflow_params,
+            "expected_output": expected_output,
+            "validation": validation,
+        }
+    )
 
     # ── Edge-case stubs ──────────────────────────────────────────────────
     # If there are required params, generate a "missing params" test stub
     required_params = [
-        k for k, v in wdl_params.items()
-        if isinstance(v, dict) and v.get("source") == "form_input"
+        k for k, v in wdl_params.items() if isinstance(v, dict) and v.get("source") == "form_input"
     ]
     if required_params:
-        test_cases.append({
-            "test_case_name": f"missing_params_{slug}",
-            "prompt": prompt,
-            "workflow_params": {},  # Deliberately empty
-            "expected_output": "error",
-            "validation": {"type": "contains", "value": "error"},
-        })
+        test_cases.append(
+            {
+                "test_case_name": f"missing_params_{slug}",
+                "prompt": prompt,
+                "workflow_params": {},  # Deliberately empty
+                "expected_output": "error",
+                "validation": {"type": "contains", "value": "error"},
+            }
+        )
 
     return test_cases
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _derive_prompt(process_name: str, narrations: list[dict]) -> str:
     """Derive a test prompt from narrations or process name."""

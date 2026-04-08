@@ -1,19 +1,39 @@
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from backend.elicitation.config import settings
 from sqlalchemy import text
 
+from backend.elicitation.config import settings
 from backend.elicitation.database import Base, engine
 from backend.elicitation.mcp_server import mcp
-from backend.elicitation.routers import abcd_export, attachments, browser_commands, capture_sessions, chat, clicks, documents, example_site, export, messages, narrations, processes, projects, questions, screenshots, sessions, timeline, url_events, login_sessions
+from backend.elicitation.routers import (
+    abcd_export,
+    attachments,
+    browser_commands,
+    capture_sessions,
+    chat,
+    clicks,
+    documents,
+    example_site,
+    export,
+    login_sessions,
+    messages,
+    narrations,
+    processes,
+    projects,
+    questions,
+    screenshots,
+    sessions,
+    timeline,
+    url_events,
+)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Create data directories
     data_dir = Path(settings.data_dir)
     (data_dir / "screenshots").mkdir(parents=True, exist_ok=True)
@@ -97,7 +117,7 @@ app.mount("/mcp", mcp.sse_app())
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "service": settings.app_name,

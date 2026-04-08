@@ -6,11 +6,10 @@ Path: /_/FlightsFrontendUi/data/travel.frontend.flights.FlightsFrontendService/G
 from __future__ import annotations
 
 import json
-import urllib.parse
 import pathlib
+import urllib.parse
 
 import httpx
-
 from noui_runtime.auth import get_auth_headers
 
 BASE_URL = "https://www.google.com"
@@ -51,27 +50,70 @@ async def execute(
 
     legs = [
         [
-            [[[origin_entity_id, 5]]], [[[destination_entity_id, 5]]],
-            None, 0, None, None, departure_date,
-            None, None, None, None, None, None, None, 3,
+            [[[origin_entity_id, 5]]],
+            [[[destination_entity_id, 5]]],
+            None,
+            0,
+            None,
+            None,
+            departure_date,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            3,
         ],
     ]
     if return_date:
-        legs.append([
-            [[[destination_entity_id, 5]]], [[[origin_entity_id, 5]]],
-            None, 0, None, None, return_date,
-            None, None, None, None, None, None, None, 3,
-        ])
+        legs.append(
+            [
+                [[[destination_entity_id, 5]]],
+                [[[origin_entity_id, 5]]],
+                None,
+                0,
+                None,
+                None,
+                return_date,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                3,
+            ]
+        )
 
     inner = [
         [],
         [
-            None, None, trip_type, None, [], 1, [adults, 0, 0, 0],
-            None, None, None, None, None, None,
+            None,
+            None,
+            trip_type,
+            None,
+            [],
+            1,
+            [adults, 0, 0, 0],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             legs,
-            None, None, None, 1,
+            None,
+            None,
+            None,
+            1,
         ],
-        0, 0, 0, 1,
+        0,
+        0,
+        0,
+        1,
     ]
     freq = json.dumps([None, json.dumps(inner)])
     body_parts = {"f.req": freq}

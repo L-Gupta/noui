@@ -19,10 +19,10 @@ from typing import Any
 
 from backend.config import settings
 
-
 # ---------------------------------------------------------------------------
 # Internal HTTP helper
 # ---------------------------------------------------------------------------
+
 
 def _tabby_http(
     method: str,
@@ -53,6 +53,7 @@ def _tabby_http(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def is_alive() -> bool:
     """Return True if the Tabby API is reachable and reports healthy."""
@@ -168,9 +169,7 @@ def promote_profile(profile_db_id: str, token: str) -> dict:
 
     Raises RuntimeError on failure.
     """
-    resp = _tabby_http(
-        "POST", f"/admin/profiles/{profile_db_id}/promote", token=token
-    )
+    resp = _tabby_http("POST", f"/admin/profiles/{profile_db_id}/promote", token=token)
     if not isinstance(resp, dict):
         raise RuntimeError(
             f"Unexpected response type from POST /admin/profiles/{profile_db_id}/promote: "
@@ -191,11 +190,15 @@ def get_agent_token(client_id: str, client_secret: str) -> str:
             "Missing TABBY_CLIENT_ID or TABBY_CLIENT_SECRET — "
             "run `noui tabby setup` to provision agent credentials"
         )
-    resp = _tabby_http("POST", "/auth/agent-token", body={
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "grant_type": "client_credentials",
-    })
+    resp = _tabby_http(
+        "POST",
+        "/auth/agent-token",
+        body={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "client_credentials",
+        },
+    )
     if not isinstance(resp, dict):
         raise RuntimeError(f"Unexpected response from POST /auth/agent-token: {type(resp)}")
     token = resp.get("access_token") or resp.get("token", "")
@@ -218,9 +221,7 @@ def request_credentials(profile_slug: str, agent_token: str) -> dict:
         token=agent_token,
     )
     if not isinstance(resp, dict):
-        raise RuntimeError(
-            f"Unexpected response from POST /credentials/request: {type(resp)}"
-        )
+        raise RuntimeError(f"Unexpected response from POST /credentials/request: {type(resp)}")
     # Normalize: credentials may be nested under "credentials" key
     return resp.get("credentials", resp)
 

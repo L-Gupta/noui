@@ -17,14 +17,12 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
-from typing import Any
 
 import httpx
 
-
 # ── Result dataclass ─────────────────────────────────────────────────────────
+
 
 class VerificationResult:
     """Structured result from AuthVerifier.verify()."""
@@ -61,6 +59,7 @@ class VerificationResult:
 
 
 # ── AuthVerifier ─────────────────────────────────────────────────────────────
+
 
 class AuthVerifier:
     """Verify and repair auth for a compiled MCP server before installation.
@@ -124,7 +123,9 @@ class AuthVerifier:
 
         if not strategy:
             # Unauthenticated server — nothing to verify
-            return VerificationResult("PASS", message="No auth required — server is safe to install.")
+            return VerificationResult(
+                "PASS", message="No auth required — server is safe to install."
+            )
 
         if strategy == "static_secret_header":
             return await self._verify_static_secrets()
@@ -193,9 +194,7 @@ class AuthVerifier:
                 "NEEDS_SECRET",
                 message=str(exc),
                 missing_artifacts=["TABBY_CLIENT_ID", "TABBY_CLIENT_SECRET"],
-                suggested_repairs=[
-                    {"action": "run_command", "command": "noui tabby setup"}
-                ],
+                suggested_repairs=[{"action": "run_command", "command": "noui tabby setup"}],
             )
 
         profile_slug = self.auth_plan.get("profile_slug", "")
@@ -290,12 +289,12 @@ class AuthVerifier:
         # Repair: update credential_types to list required headers/cookies
         if profile_db_id and (missing_headers or missing_cookies):
             new_credential_types = {
-                "headers": self.auth_plan.get("tabby_export", {}).get(
-                    "credential_types", {}
-                ).get("headers", missing_headers),
-                "cookies": self.auth_plan.get("tabby_export", {}).get(
-                    "credential_types", {}
-                ).get("cookies", missing_cookies),
+                "headers": self.auth_plan.get("tabby_export", {})
+                .get("credential_types", {})
+                .get("headers", missing_headers),
+                "cookies": self.auth_plan.get("tabby_export", {})
+                .get("credential_types", {})
+                .get("cookies", missing_cookies),
             }
             try:
                 await self._update_credential_types(profile_db_id, new_credential_types)
@@ -352,7 +351,10 @@ class AuthVerifier:
                     return VerificationResult(
                         "PASS",
                         message=f"Auth verification passed for profile {profile_slug!r}.",
-                        diagnostics={"profile_slug": profile_slug, "credential_count": len(creds.get("headers", []))},
+                        diagnostics={
+                            "profile_slug": profile_slug,
+                            "credential_count": len(creds.get("headers", [])),
+                        },
                     )
             except Exception as exc:
                 return VerificationResult(
@@ -365,7 +367,8 @@ class AuthVerifier:
             missing = [
                 f["secret_env_var"]
                 for f in self.auth_plan.get("fallbacks", [])
-                if f.get("type") == "static_secret_header" and not os.environ.get(f.get("secret_env_var", ""))
+                if f.get("type") == "static_secret_header"
+                and not os.environ.get(f.get("secret_env_var", ""))
             ]
             if missing:
                 return VerificationResult(
@@ -459,6 +462,7 @@ class AuthVerifier:
 
 
 # ── Convenience function ─────────────────────────────────────────────────────
+
 
 async def verify_before_install(
     server_dir: str | Path,

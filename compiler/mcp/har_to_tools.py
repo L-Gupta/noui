@@ -26,7 +26,6 @@ import json
 import re
 from urllib.parse import parse_qs, urlparse
 
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -154,10 +153,7 @@ def _is_api_call(entry: dict) -> bool:
         return True
 
     # Accept non-GET requests even if we can't identify the mime type
-    if method != "GET":
-        return True
-
-    return False
+    return method != "GET"
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +387,9 @@ def _entry_to_tool_def(
         for seg in path_template.split("/")
         if seg and not seg.startswith("{")
     )
-    description = f"{verb} {path_label} ({workflow_name})" if path_label else f"{verb} ({workflow_name})"
+    description = (
+        f"{verb} {path_label} ({workflow_name})" if path_label else f"{verb} ({workflow_name})"
+    )
 
     return {
         "name": name,

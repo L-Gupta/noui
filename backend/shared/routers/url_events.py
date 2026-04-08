@@ -27,6 +27,7 @@ async def create_url_event(data: UrlEventCreate, db: AsyncSession = Depends(get_
     if session_id and not session_type:
         # Lazy import to avoid circular dependency at module level
         from backend.shared.routers.har import _resolve_session_type
+
         session_type = await _resolve_session_type(session_id, db) or "unknown"
 
     event = await emit_url_event(

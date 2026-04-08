@@ -20,14 +20,13 @@ if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
 from compiler.mcp.auth_plan import (
-    generate_auth_plan,
-    _is_static_api_key_app,
     _env_var_name,
-    _extract_observed_auth_headers,
+    _is_static_api_key_app,
+    generate_auth_plan,
 )
 
-
 # ── HAR fixtures ─────────────────────────────────────────────────────────────
+
 
 def _make_har(entries: list[dict]) -> dict:
     return {"log": {"entries": entries}}
@@ -63,6 +62,7 @@ def _set_cookie_response() -> dict:
 
 
 # ── Static API key detection ─────────────────────────────────────────────────
+
 
 class TestStaticApiKeyDetection:
     def test_bearer_without_set_cookie_is_static(self) -> None:
@@ -100,6 +100,7 @@ class TestStaticApiKeyDetection:
 
 # ── Env var naming ───────────────────────────────────────────────────────────
 
+
 class TestEnvVarNaming:
     def test_authorization_becomes_api_key(self) -> None:
         assert _env_var_name("adopt-bank", "Authorization") == "ADOPT_BANK_API_KEY"
@@ -113,6 +114,7 @@ class TestEnvVarNaming:
 
 
 # ── Auth plan generation — strategy selection ────────────────────────────────
+
 
 class TestAuthPlanStrategy:
     def _auth_info_with_bearer(self) -> dict:
@@ -169,7 +171,11 @@ class TestAuthPlanStrategy:
             response_headers=[_set_cookie_response()],
         )
         har = _make_har([entry])
-        auth_info = {**self._auth_info_with_bearer(), "has_cookies": True, "set_cookie_names": ["session"]}
+        auth_info = {
+            **self._auth_info_with_bearer(),
+            "has_cookies": True,
+            "set_cookie_names": ["session"],
+        }
         plan = generate_auth_plan(
             har=har,
             auth_info=auth_info,
@@ -182,13 +188,18 @@ class TestAuthPlanStrategy:
 
 # ── Profile slug vs DB id ────────────────────────────────────────────────────
 
+
 class TestProfileIdentifiers:
     def test_slug_and_db_id_stored_separately(self) -> None:
         har = _make_har([_bearer_entry()])
         auth_info = {
-            "has_auth_headers": True, "has_cookies": False, "has_csrf": False,
-            "auth_header_names": ["Authorization"], "csrf_header_names": [],
-            "set_cookie_names": [], "auth_domains": [],
+            "has_auth_headers": True,
+            "has_cookies": False,
+            "has_csrf": False,
+            "auth_header_names": ["Authorization"],
+            "csrf_header_names": [],
+            "set_cookie_names": [],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har,
@@ -206,9 +217,13 @@ class TestProfileIdentifiers:
         """credentials/request must use slug — UUID must never appear in runtime_identifier."""
         har = _make_har([_bearer_entry()])
         auth_info = {
-            "has_auth_headers": True, "has_cookies": False, "has_csrf": False,
-            "auth_header_names": ["Authorization"], "csrf_header_names": [],
-            "set_cookie_names": [], "auth_domains": [],
+            "has_auth_headers": True,
+            "has_cookies": False,
+            "has_csrf": False,
+            "auth_header_names": ["Authorization"],
+            "csrf_header_names": [],
+            "set_cookie_names": [],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har,
@@ -226,14 +241,19 @@ class TestProfileIdentifiers:
 
 # ── Fallback recipes ─────────────────────────────────────────────────────────
 
+
 class TestFallbacks:
     def test_static_secret_fallback_has_no_secret_value(self) -> None:
         """Fallbacks must contain value_template (recipe), never the actual secret."""
         har = _make_har([_bearer_entry()])
         auth_info = {
-            "has_auth_headers": True, "has_cookies": False, "has_csrf": False,
-            "auth_header_names": ["Authorization"], "csrf_header_names": [],
-            "set_cookie_names": [], "auth_domains": [],
+            "has_auth_headers": True,
+            "has_cookies": False,
+            "has_csrf": False,
+            "auth_header_names": ["Authorization"],
+            "csrf_header_names": [],
+            "set_cookie_names": [],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har,
@@ -253,9 +273,13 @@ class TestFallbacks:
     def test_bearer_fallback_template_includes_bearer_prefix(self) -> None:
         har = _make_har([_bearer_entry()])
         auth_info = {
-            "has_auth_headers": True, "has_cookies": False, "has_csrf": False,
-            "auth_header_names": ["Authorization"], "csrf_header_names": [],
-            "set_cookie_names": [], "auth_domains": [],
+            "has_auth_headers": True,
+            "has_cookies": False,
+            "has_csrf": False,
+            "auth_header_names": ["Authorization"],
+            "csrf_header_names": [],
+            "set_cookie_names": [],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har,
@@ -273,9 +297,13 @@ class TestFallbacks:
         entry = _make_entry(response_headers=[_set_cookie_response()])
         har = _make_har([entry])
         auth_info = {
-            "has_auth_headers": False, "has_cookies": True, "has_csrf": False,
-            "auth_header_names": [], "csrf_header_names": [],
-            "set_cookie_names": ["session"], "auth_domains": [],
+            "has_auth_headers": False,
+            "has_cookies": True,
+            "has_csrf": False,
+            "auth_header_names": [],
+            "csrf_header_names": [],
+            "set_cookie_names": ["session"],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har,
@@ -291,13 +319,18 @@ class TestFallbacks:
 
 # ── Required auth fields ─────────────────────────────────────────────────────
 
+
 class TestRequiredAuth:
     def test_required_headers_from_auth_info(self) -> None:
         har = _make_har([_bearer_entry()])
         auth_info = {
-            "has_auth_headers": True, "has_cookies": False, "has_csrf": False,
+            "has_auth_headers": True,
+            "has_cookies": False,
+            "has_csrf": False,
             "auth_header_names": ["Authorization", "X-Request-Id"],
-            "csrf_header_names": [], "set_cookie_names": [], "auth_domains": [],
+            "csrf_header_names": [],
+            "set_cookie_names": [],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
             har=har, auth_info=auth_info, profile_slug="", profile_db_id="", app_slug="app"
@@ -314,12 +347,20 @@ class TestRequiredAuth:
         )
         har = _make_har([entry])
         auth_info = {
-            "has_auth_headers": False, "has_cookies": True, "has_csrf": True,
-            "auth_header_names": [], "csrf_header_names": ["X-CSRF-Token"],
-            "set_cookie_names": ["session"], "auth_domains": [],
+            "has_auth_headers": False,
+            "has_cookies": True,
+            "has_csrf": True,
+            "auth_header_names": [],
+            "csrf_header_names": ["X-CSRF-Token"],
+            "set_cookie_names": ["session"],
+            "auth_domains": [],
         }
         plan = generate_auth_plan(
-            har=har, auth_info=auth_info, profile_slug="csrf-app", profile_db_id="", app_slug="csrf-app"
+            har=har,
+            auth_info=auth_info,
+            profile_slug="csrf-app",
+            profile_db_id="",
+            app_slug="csrf-app",
         )
         # CSRF apps should use tabby_credentials (Tabby manages session + CSRF)
         assert plan["strategy"] == "tabby_credentials"

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -21,6 +21,6 @@ async def ping(request: PingRequest):
     """Proof-of-life endpoint. Echoes back the message with a timestamp."""
     return PingResponse(
         received=request.message,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(UTC).isoformat(),
         echo="pong",
     )

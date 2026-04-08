@@ -73,12 +73,15 @@ async def generate_project_markdown(db: AsyncSession, project_id: str) -> str:
         lines.append("| Name | Base URL | Status | Created |")
         lines.append("|------|----------|--------|---------|")
         for proc in processes:
-            lines.append(f"| {proc.name} | {proc.base_url or '-'} | {proc.status} | {_fmt_date(proc.created_at)} |")
+            lines.append(
+                f"| {proc.name} | {proc.base_url or '-'} | {proc.status} | {_fmt_date(proc.created_at)} |"
+            )
         lines.append("")
 
     # Conversation
     result = await db.execute(
-        select(Message).where(Message.project_id == project_id, Message.process_id.is_(None))
+        select(Message)
+        .where(Message.project_id == project_id, Message.process_id.is_(None))
         .order_by(Message.timestamp.asc())
     )
     messages = result.scalars().all()
@@ -94,7 +97,8 @@ async def generate_project_markdown(db: AsyncSession, project_id: str) -> str:
 
     # Screenshots
     result = await db.execute(
-        select(Screenshot).where(Screenshot.project_id == project_id)
+        select(Screenshot)
+        .where(Screenshot.project_id == project_id)
         .order_by(Screenshot.timestamp.asc())
     )
     screenshots = result.scalars().all()
@@ -108,7 +112,8 @@ async def generate_project_markdown(db: AsyncSession, project_id: str) -> str:
 
     # Timeline
     result = await db.execute(
-        select(TimelineEvent).where(TimelineEvent.project_id == project_id)
+        select(TimelineEvent)
+        .where(TimelineEvent.project_id == project_id)
         .order_by(TimelineEvent.timestamp.asc())
     )
     events = result.scalars().all()
@@ -118,7 +123,9 @@ async def generate_project_markdown(db: AsyncSession, project_id: str) -> str:
         lines.append("| Time | Type | Summary |")
         lines.append("|------|------|---------|")
         for ev in events:
-            lines.append(f"| {_fmt_time(ev.timestamp)} | {ev.event_type} | {_sanitize_cell(ev.summary)} |")
+            lines.append(
+                f"| {_fmt_time(ev.timestamp)} | {ev.event_type} | {_sanitize_cell(ev.summary)} |"
+            )
         lines.append("")
 
     return "\n".join(lines)
@@ -157,7 +164,8 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
     # Capture Sessions
     result = await db.execute(
-        select(CaptureSession).where(CaptureSession.process_id == process_id)
+        select(CaptureSession)
+        .where(CaptureSession.process_id == process_id)
         .order_by(CaptureSession.started_at.asc().nulls_last())
     )
     sessions = result.scalars().all()
@@ -172,7 +180,8 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
             # Narrations for this session
             result = await db.execute(
-                select(Narration).where(Narration.capture_session_id == sess.id)
+                select(Narration)
+                .where(Narration.capture_session_id == sess.id)
                 .order_by(Narration.timestamp.asc())
             )
             narrations = result.scalars().all()
@@ -185,7 +194,8 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
             # Clicks for this session
             result = await db.execute(
-                select(ClickEvent).where(ClickEvent.capture_session_id == sess.id)
+                select(ClickEvent)
+                .where(ClickEvent.capture_session_id == sess.id)
                 .order_by(ClickEvent.timestamp.asc())
             )
             clicks = result.scalars().all()
@@ -198,16 +208,22 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
                     desc = _sanitize_cell(click.selector or click.tag_name)
                     if click.text_content:
                         desc += f' "{_sanitize_cell(click.text_content)}"'
-                    et = click.event_type if hasattr(click, "event_type") and click.event_type else "click"
+                    et = (
+                        click.event_type
+                        if hasattr(click, "event_type") and click.event_type
+                        else "click"
+                    )
                     lines.append(f"| {_fmt_time(click.timestamp)} | {et} | {desc} |")
                 lines.append("")
 
             # URL navigations for this session
             result = await db.execute(
-                select(TimelineEvent).where(
+                select(TimelineEvent)
+                .where(
                     TimelineEvent.capture_session_id == sess.id,
                     TimelineEvent.event_type == "url_change",
-                ).order_by(TimelineEvent.timestamp.asc())
+                )
+                .order_by(TimelineEvent.timestamp.asc())
             )
             url_events = result.scalars().all()
             if url_events:
@@ -219,8 +235,7 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
     # Conversation
     result = await db.execute(
-        select(Message).where(Message.process_id == process_id)
-        .order_by(Message.timestamp.asc())
+        select(Message).where(Message.process_id == process_id).order_by(Message.timestamp.asc())
     )
     messages = result.scalars().all()
     if messages:
@@ -235,7 +250,8 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
     # Screenshots
     result = await db.execute(
-        select(Screenshot).where(Screenshot.process_id == process_id)
+        select(Screenshot)
+        .where(Screenshot.process_id == process_id)
         .order_by(Screenshot.timestamp.asc())
     )
     screenshots = result.scalars().all()
@@ -249,7 +265,8 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
 
     # Full Timeline
     result = await db.execute(
-        select(TimelineEvent).where(TimelineEvent.process_id == process_id)
+        select(TimelineEvent)
+        .where(TimelineEvent.process_id == process_id)
         .order_by(TimelineEvent.timestamp.asc())
     )
     events = result.scalars().all()
@@ -259,7 +276,9 @@ async def generate_process_markdown(db: AsyncSession, process_id: str) -> str:
         lines.append("| Time | Type | Summary |")
         lines.append("|------|------|---------|")
         for ev in events:
-            lines.append(f"| {_fmt_time(ev.timestamp)} | {ev.event_type} | {_sanitize_cell(ev.summary)} |")
+            lines.append(
+                f"| {_fmt_time(ev.timestamp)} | {ev.event_type} | {_sanitize_cell(ev.summary)} |"
+            )
         lines.append("")
 
     return "\n".join(lines)

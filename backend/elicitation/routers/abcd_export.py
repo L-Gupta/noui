@@ -12,17 +12,21 @@ import json
 import logging
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.elicitation.auth_detector import detect_auth_patterns
 from backend.elicitation.database import get_db
-from backend.elicitation.har_analyzer import annotate_har_entries, detect_api_groups, filter_har_entries
+from backend.elicitation.har_analyzer import (
+    annotate_har_entries,
+    detect_api_groups,
+    filter_har_entries,
+)
 from backend.elicitation.models import (
     CaptureSession,
     ClickEvent,
@@ -43,6 +47,7 @@ router = APIRouter(prefix="/abcd", tags=["abcd-export"])
 
 
 # ── Export endpoint ──────────────────────────────────────────────────────────
+
 
 @router.post("/processes/{process_id}/export")
 async def export_abcd_workspace(
@@ -127,7 +132,7 @@ async def export_abcd_workspace(
         "action_id": f"{_slugify(process.name)}-{process.id[:8]}",
         "name": process.name,
         "description": description,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "source": "elicitation-agent",
         "source_process_id": process.id,
         "source_project_id": process.project_id,
@@ -135,8 +140,7 @@ async def export_abcd_workspace(
         "tool_mode": False,
         "generation_stats": {
             "har_entries_total": sum(
-                len(h.get("log", {}).get("entries", []))
-                for h in data["har_logs"]
+                len(h.get("log", {}).get("entries", [])) for h in data["har_logs"]
             ),
             "har_entries_filtered": len(filtered_har),
             "click_events": len(data["click_dicts"]),
@@ -190,6 +194,7 @@ async def export_abcd_workspace(
 
 
 # ── Analysis-only endpoint (no zip, just JSON results) ───────────────────────
+
 
 @router.get("/processes/{process_id}/analysis")
 async def analyze_process(
@@ -247,6 +252,7 @@ async def analyze_process(
 
 
 # ── Data loading ─────────────────────────────────────────────────────────────
+
 
 async def _load_process_data(db: AsyncSession, process: Process) -> dict:
     """Load all captured data for a process from the database."""
@@ -339,9 +345,7 @@ async def _load_process_data(db: AsyncSession, process: Process) -> dict:
 
     # Messages
     msg_result = await db.execute(
-        select(Message)
-        .where(Message.process_id == process.id)
-        .order_by(Message.timestamp.asc())
+        select(Message).where(Message.process_id == process.id).order_by(Message.timestamp.asc())
     )
     messages = msg_result.scalars().all()
     message_dicts = [
@@ -356,10 +360,7 @@ async def _load_process_data(db: AsyncSession, process: Process) -> dict:
     ]
 
     # Questions
-    q_result = await db.execute(
-        select(Question)
-        .where(Question.process_id == process.id)
-    )
+    q_result = await db.execute(select(Question).where(Question.process_id == process.id))
     questions = q_result.scalars().all()
     question_dicts = [
         {
@@ -383,6 +384,7 @@ async def _load_process_data(db: AsyncSession, process: Process) -> dict:
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
+
 
 def _pretty_json(obj) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False, default=str)

@@ -19,15 +19,13 @@ from __future__ import annotations
 
 import json
 import re
-import textwrap
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from compiler.mcp.api_doc_generator import generate_api_markdown
-from compiler.mcp.har_to_tools import har_to_tool_defs
 from compiler.mcp.auth_adapter import generate_auth_adapter
-from compiler.mcp.auth_plan import generate_auth_plan, _is_static_api_key_app
-
+from compiler.mcp.auth_plan import generate_auth_plan
+from compiler.mcp.har_to_tools import har_to_tool_defs
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -70,7 +68,7 @@ def compile_workflow(
     # Derive stable identifiers
     server_id = f"{app_slug}-{session_id[:8]}"
     app_name = _slug_to_title(app_slug)
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ── 1. Convert HAR → tool_defs ────────────────────────────────────────────
     tool_defs = har_to_tool_defs(
@@ -101,7 +99,9 @@ def compile_workflow(
             "has_cookies": bool(auth_cookies_seen),
             "has_csrf": any("csrf" in h.lower() or "xsrf" in h.lower() for h in auth_headers_seen),
             "auth_header_names": auth_headers_seen,
-            "csrf_header_names": [h for h in auth_headers_seen if "csrf" in h.lower() or "xsrf" in h.lower()],
+            "csrf_header_names": [
+                h for h in auth_headers_seen if "csrf" in h.lower() or "xsrf" in h.lower()
+            ],
             "set_cookie_names": auth_cookies_seen,
             "auth_domains": [],
         }
@@ -277,7 +277,8 @@ def _render_server(*, app_name: str, tool_defs: list[dict]) -> str:
         lines.append("")
         lines.append("@mcp.tool()")
         if sig_parts:
-            sig = f"async def {n}(\n    {',\n    '.join(sig_parts)},\n) -> dict:"
+            _sep = ",\n    "
+            sig = f"async def {n}(\n    {_sep.join(sig_parts)},\n) -> dict:"
         else:
             sig = f"async def {n}() -> dict:"
         lines.append(sig)
@@ -327,9 +328,7 @@ def _render_operation(td: dict, *, auth_plan: dict) -> str:
 
     # Recorded non-auth headers (auth headers were already stripped by har_to_tools)
     static_headers = {
-        h["name"]: h["value"]
-        for h in request_headers
-        if h.get("name") and h.get("value")
+        h["name"]: h["value"] for h in request_headers if h.get("name") and h.get("value")
     }
 
     lines: list[str] = [
@@ -359,9 +358,8 @@ def _render_operation(td: dict, *, auth_plan: dict) -> str:
     desc_safe = description.replace('"""', "'''")
 
     if sig_parts:
-        lines.append(
-            f"async def execute(\n    {',\n    '.join(sig_parts)},\n) -> dict:"
-        )
+        _sep = ",\n    "
+        lines.append(f"async def execute(\n    {_sep.join(sig_parts)},\n) -> dict:")
     else:
         lines.append("async def execute() -> dict:")
     lines.append(f'    """{desc_safe}"""')
@@ -443,9 +441,13 @@ def _py_signature(params: list[dict]) -> list[str]:
 
 
 def _py_type(t: str) -> str:
-    return {"int": "int", "integer": "int", "bool": "bool", "boolean": "bool", "float": "float"}.get(
-        t.lower(), "str"
-    )
+    return {
+        "int": "int",
+        "integer": "int",
+        "bool": "bool",
+        "boolean": "bool",
+        "float": "float",
+    }.get(t.lower(), "str")
 
 
 def _py_default(t: str) -> str:

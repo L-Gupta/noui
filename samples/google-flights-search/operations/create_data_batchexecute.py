@@ -7,11 +7,10 @@ RPC: H028ib (airport/city autocomplete)
 from __future__ import annotations
 
 import json
-import urllib.parse
 import pathlib
+import urllib.parse
 
 import httpx
-
 from noui_runtime.auth import get_auth_headers
 
 BASE_URL = "https://www.google.com"
@@ -41,7 +40,9 @@ async def execute(
     Returns matching locations with their Google entity IDs
     (e.g. '/m/022pfm' for São Paulo) needed by the flight search tools.
     """
-    freq = json.dumps([[["H028ib", json.dumps([query, [1, 2, 3, 5], None, [2], 1]), None, "generic"]]])
+    freq = json.dumps(
+        [[["H028ib", json.dumps([query, [1, 2, 3, 5], None, [2], 1]), None, "generic"]]]
+    )
     body_parts = {"f.req": freq}
     if csrf_token:
         body_parts["at"] = csrf_token

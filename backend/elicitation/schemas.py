@@ -4,8 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
 # ── Project ──────────────────────────────────────────────────────────────────
+
 
 class ProjectCreate(BaseModel):
     name: str
@@ -38,6 +38,7 @@ class ProjectDetail(ProjectOut):
 
 # ── Process ──────────────────────────────────────────────────────────────────
 
+
 class ProcessCreate(BaseModel):
     name: str
     description: str = ""
@@ -66,6 +67,7 @@ class ProcessOut(BaseModel):
 
 # ── Message ──────────────────────────────────────────────────────────────────
 
+
 class MessageCreate(BaseModel):
     project_id: str | None = None
     process_id: str | None = None
@@ -91,6 +93,7 @@ class MessageOut(BaseModel):
 
 # ── ChatSession ─────────────────────────────────────────────────────────
 
+
 class ChatSessionCreate(BaseModel):
     project_id: str
     process_id: str | None = None
@@ -114,6 +117,7 @@ class ChatSessionOut(BaseModel):
 
 # ── Screenshot ───────────────────────────────────────────────────────────────
 
+
 class ScreenshotOut(BaseModel):
     id: str
     project_id: str | None
@@ -126,6 +130,7 @@ class ScreenshotOut(BaseModel):
 
 
 # ── CaptureSession ──────────────────────────────────────────────────────────
+
 
 class CaptureSessionCreate(BaseModel):
     click_tracking: bool = True
@@ -171,6 +176,7 @@ class CaptureSessionOut(BaseModel):
 
 # ── Narration ───────────────────────────────────────────────────────────────
 
+
 class NarrationCreate(BaseModel):
     project_id: str
     process_id: str | None = None
@@ -192,6 +198,7 @@ class NarrationOut(BaseModel):
 
 
 # ── ClickEvent ──────────────────────────────────────────────────────────────
+
 
 class ClickEventCreate(BaseModel):
     project_id: str | None = None
@@ -252,6 +259,7 @@ class ClickEventOut(BaseModel):
 
 # ── TimelineEvent ───────────────────────────────────────────────────────────
 
+
 class TimelineEventCreate(BaseModel):
     project_id: str
     process_id: str | None = None
@@ -277,6 +285,7 @@ class TimelineEventOut(BaseModel):
 
 
 # ── Document ───────────────────────────────────────────────────────────────
+
 
 class DocumentCreate(BaseModel):
     title: str
@@ -306,6 +315,7 @@ class DocumentOut(BaseModel):
 
 # ── Attachment ─────────────────────────────────────────────────────────────
 
+
 class AttachmentOut(BaseModel):
     id: str
     project_id: str
@@ -320,6 +330,7 @@ class AttachmentOut(BaseModel):
 
 
 # ── Question ──────────────────────────────────────────────────────────────
+
 
 class QuestionCreate(BaseModel):
     content: str
@@ -349,6 +360,7 @@ class QuestionOut(BaseModel):
 
 
 # ── LoginSession (extends CaptureSession for login recording) ───────────────
+
 
 class LoginSessionCreate(BaseModel):
     app_name: str

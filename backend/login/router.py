@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,17 +26,14 @@ router = APIRouter(tags=["login-sessions"])
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _find_or_create_project(db: AsyncSession, app_name: str, url: str) -> str:
     """Find an existing project by name or URL hostname, or create one."""
     hostname = urlparse(url).hostname or ""
-    result = await db.execute(
-        select(Project).where(func.lower(Project.name) == app_name.lower())
-    )
+    result = await db.execute(select(Project).where(func.lower(Project.name) == app_name.lower()))
     project = result.scalar_one_or_none()
     if not project and hostname:
-        result = await db.execute(
-            select(Project).where(Project.base_url.contains(hostname))
-        )
+        result = await db.execute(select(Project).where(Project.base_url.contains(hostname)))
         project = result.scalar_one_or_none()
     if not project:
         project = Project(name=app_name, base_url=url)
@@ -56,6 +53,7 @@ async def _get_session(session_id: str, db: AsyncSession) -> LoginSession:
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
+
 
 @router.post("", response_model=LoginSessionOut, status_code=201)
 async def create_login_session(
@@ -78,16 +76,16 @@ async def create_login_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    logger.info("Created login session %s for %s (project=%s)", session.id, session.app_name, project_id)
+    logger.info(
+        "Created login session %s for %s (project=%s)", session.id, session.app_name, project_id
+    )
     return session
 
 
 @router.get("", response_model=list[LoginSessionOut])
 async def list_login_sessions(db: AsyncSession = Depends(get_db)) -> list[LoginSession]:
     """List all login sessions, newest first."""
-    result = await db.execute(
-        select(LoginSession).order_by(LoginSession.created_at.desc())
-    )
+    result = await db.execute(select(LoginSession).order_by(LoginSession.created_at.desc()))
     return list(result.scalars().all())
 
 
@@ -122,9 +120,11 @@ async def start_login_session(
     """Mark a login session as actively recording."""
     session = await _get_session(session_id, db)
     if session.status not in ("idle",):
-        raise HTTPException(status_code=409, detail=f"Session is already in status '{session.status}'")
+        raise HTTPException(
+            status_code=409, detail=f"Session is already in status '{session.status}'"
+        )
     session.status = "recording"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
     return session
@@ -138,7 +138,7 @@ async def complete_login_session(
     """Mark a login session as completed."""
     session = await _get_session(session_id, db)
     session.status = "completed"
-    session.completed_at = datetime.now(timezone.utc)
+    session.completed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
     logger.info("Completed login session %s", session_id)
@@ -159,6 +159,7 @@ async def delete_login_session(
 # ---------------------------------------------------------------------------
 # Compiler endpoints
 # ---------------------------------------------------------------------------
+
 
 @router.post("/{session_id}/analyze")
 async def analyze_login_session(
@@ -213,7 +214,7 @@ async def analyze_login_session(
     har_file = har_result.scalar_one_or_none()
     if har_file:
         try:
-            with open(har_file.file_path, "r", encoding="utf-8") as fh:
+            with open(har_file.file_path, encoding="utf-8") as fh:
                 har = json.load(fh)
         except Exception as exc:
             logger.warning("Could not load HAR file %s: %s", har_file.file_path, exc)
@@ -225,7 +226,9 @@ async def analyze_login_session(
         "login_url": login_session.login_url,
         "status": login_session.status,
         "started_at": login_session.started_at.isoformat() if login_session.started_at else None,
-        "completed_at": login_session.completed_at.isoformat() if login_session.completed_at else None,
+        "completed_at": login_session.completed_at.isoformat()
+        if login_session.completed_at
+        else None,
     }
 
     # Run the generator
@@ -252,7 +255,11 @@ async def analyze_login_session(
     await db.commit()
     await db.refresh(draft)
 
-    logger.info("Analyzed login session %s — %d review items", session_id, len(bundle.get("review_items", [])))
+    logger.info(
+        "Analyzed login session %s — %d review items",
+        session_id,
+        len(bundle.get("review_items", [])),
+    )
     return bundle
 
 
@@ -265,9 +272,7 @@ async def get_login_bundle(
     # Verify the session exists so unknown IDs return 404, not just "no bundle"
     await _get_session(session_id, db)
 
-    result = await db.execute(
-        select(LoginDraft).where(LoginDraft.login_session_id == session_id)
-    )
+    result = await db.execute(select(LoginDraft).where(LoginDraft.login_session_id == session_id))
     draft = result.scalar_one_or_none()
     if draft is None:
         raise HTTPException(

@@ -18,8 +18,8 @@ if str(_NOUI_ROOT) not in sys.path:
 
 from compiler.mcp.server_generator import _render_operation
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
+
 
 def _simple_tool(
     name: str = "list_documents",
@@ -73,6 +73,7 @@ def _static_auth_plan(env_var: str = "ADOPT_BANK_API_KEY") -> dict:
 
 # ── Authenticated operations ─────────────────────────────────────────────────
 
+
 class TestAuthenticatedOperations:
     def test_uses_resolve_auth_not_get_auth_headers(self) -> None:
         src = _render_operation(_simple_tool(), auth_plan=_tabby_auth_plan())
@@ -102,6 +103,7 @@ class TestAuthenticatedOperations:
 
 
 # ── Header merging ───────────────────────────────────────────────────────────
+
 
 class TestHeaderMerging:
     def test_recorded_headers_preserved_when_auth_present(self) -> None:
@@ -140,6 +142,7 @@ class TestHeaderMerging:
 
 # ── Unauthenticated operations ───────────────────────────────────────────────
 
+
 class TestUnauthenticatedOperations:
     def test_no_auth_import_when_empty_plan(self) -> None:
         src = _render_operation(_simple_tool(), auth_plan={})
@@ -149,9 +152,7 @@ class TestUnauthenticatedOperations:
 
     def test_recorded_headers_still_included_without_auth(self) -> None:
         """Even without auth, recorded static headers should appear in generated code."""
-        tool = _simple_tool(
-            request_headers=[{"name": "Accept", "value": "application/json"}]
-        )
+        tool = _simple_tool(request_headers=[{"name": "Accept", "value": "application/json"}])
         src = _render_operation(tool, auth_plan={})
         assert "'Accept'" in src or '"Accept"' in src
 
@@ -161,6 +162,7 @@ class TestUnauthenticatedOperations:
 
 
 # ── Operation structure ──────────────────────────────────────────────────────
+
 
 class TestOperationStructure:
     def test_base_url_embedded(self) -> None:

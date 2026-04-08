@@ -1,4 +1,5 @@
 """NoUI runtime auth adapter — resolves live credentials from Tabby."""
+
 from __future__ import annotations
 
 import os

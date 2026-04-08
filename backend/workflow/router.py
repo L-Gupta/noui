@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -17,7 +17,11 @@ from backend.database import get_db
 from backend.elicitation.models import Process, Project
 from backend.shared.models import ClickEvent, HarFile, UrlEvent
 from backend.workflow.models import WorkflowSession
-from backend.workflow.schemas import WorkflowSessionCreate, WorkflowSessionOut, WorkflowSessionUpdate
+from backend.workflow.schemas import (
+    WorkflowSessionCreate,
+    WorkflowSessionOut,
+    WorkflowSessionUpdate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +35,11 @@ _NOUI_ROOT = Path(__file__).resolve().parent.parent.parent
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _find_or_create_project(db: AsyncSession, name: str, url: str) -> str:
     """Find an existing project by URL hostname, or create one."""
     hostname = urlparse(url).hostname or name
-    result = await db.execute(
-        select(Project).where(Project.base_url.contains(hostname))
-    )
+    result = await db.execute(select(Project).where(Project.base_url.contains(hostname)))
     project = result.scalar_one_or_none()
     if not project:
         project = Project(name=hostname, base_url=url)
@@ -56,6 +59,7 @@ async def _get_session(session_id: str, db: AsyncSession) -> WorkflowSession:
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
+
 
 @router.post("", response_model=WorkflowSessionOut, status_code=201)
 async def create_workflow_session(
@@ -78,16 +82,16 @@ async def create_workflow_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    logger.info("Created workflow session %s: %s (project=%s)", session.id, session.name, project_id)
+    logger.info(
+        "Created workflow session %s: %s (project=%s)", session.id, session.name, project_id
+    )
     return session
 
 
 @router.get("", response_model=list[WorkflowSessionOut])
 async def list_workflow_sessions(db: AsyncSession = Depends(get_db)) -> list[WorkflowSession]:
     """List all workflow sessions, newest first."""
-    result = await db.execute(
-        select(WorkflowSession).order_by(WorkflowSession.created_at.desc())
-    )
+    result = await db.execute(select(WorkflowSession).order_by(WorkflowSession.created_at.desc()))
     return list(result.scalars().all())
 
 
@@ -122,9 +126,11 @@ async def start_workflow_session(
     """Mark a workflow session as actively recording."""
     session = await _get_session(session_id, db)
     if session.status not in ("idle",):
-        raise HTTPException(status_code=409, detail=f"Session is already in status '{session.status}'")
+        raise HTTPException(
+            status_code=409, detail=f"Session is already in status '{session.status}'"
+        )
     session.status = "recording"
-    session.started_at = datetime.now(timezone.utc)
+    session.started_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
     return session
@@ -138,7 +144,7 @@ async def complete_workflow_session(
     """Mark a workflow session as completed."""
     session = await _get_session(session_id, db)
     session.status = "completed"
-    session.completed_at = datetime.now(timezone.utc)
+    session.completed_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(session)
     logger.info("Completed workflow session %s", session_id)
@@ -160,14 +166,14 @@ async def delete_workflow_session(
 # MCP export
 # ---------------------------------------------------------------------------
 
+
 @router.post("/{session_id}/export-mcp")
 async def export_mcp(
     session_id: str,
     tabby_profile_id: str = Query(
         "",
         description=(
-            "Legacy: Tabby profile ID (UUID or slug). "
-            "Prefer profile_slug for new integrations."
+            "Legacy: Tabby profile ID (UUID or slug). Prefer profile_slug for new integrations."
         ),
     ),
     profile_slug: str = Query(
@@ -283,6 +289,7 @@ async def export_mcp(
     # Run the compiler
     try:
         from compiler.mcp.server_generator import compile_workflow
+
         manifest = compile_workflow(
             session_id=session_id,
             session_name=session.name,

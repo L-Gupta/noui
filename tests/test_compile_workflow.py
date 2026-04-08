@@ -28,10 +28,10 @@ if str(_NOUI_ROOT) not in sys.path:
 
 from compiler.mcp.server_generator import compile_workflow
 
-
 # ---------------------------------------------------------------------------
 # HAR builders
 # ---------------------------------------------------------------------------
+
 
 def _har(entries: list[dict]) -> dict:
     return {"log": {"version": "1.2", "entries": entries}}
@@ -78,6 +78,7 @@ def _set_cookie(name: str = "session", value: str = "abc") -> dict:
 # Compile helper
 # ---------------------------------------------------------------------------
 
+
 def _compile(
     har: dict,
     *,
@@ -86,8 +87,8 @@ def _compile(
     profile_slug: str = "",
     profile_db_id: str = "",
     tabby_profile_id: str = "",
-) -> tuple[dict, Path]:
-    """Run compile_workflow into a temp dir; return (manifest, server_dir)."""
+) -> tuple[dict, dict[str, str]]:
+    """Run compile_workflow into a temp dir; return (manifest, {rel_path: content})."""
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / app_slug / f"{app_slug}-test1234"
         manifest = compile_workflow(
@@ -115,14 +116,17 @@ def _compile(
 # Scenario 1: Unauthenticated API
 # ---------------------------------------------------------------------------
 
+
 class TestUnauthenticatedApi:
     """No auth headers, no cookies → no auth_plan.json, plain operations."""
 
     def setup_method(self) -> None:
-        har = _har([
-            _entry("https://api.flights.example.com/v1/search", method="GET", status=200),
-            _entry("https://api.flights.example.com/v1/prices", method="GET", status=200),
-        ])
+        har = _har(
+            [
+                _entry("https://api.flights.example.com/v1/search", method="GET", status=200),
+                _entry("https://api.flights.example.com/v1/prices", method="GET", status=200),
+            ]
+        )
         self.manifest, self.files = _compile(har, app_slug="flights")
 
     def test_no_auth_plan_json(self) -> None:
@@ -154,17 +158,20 @@ class TestUnauthenticatedApi:
 # Scenario 2: Static API-key app (Adopt Bank)
 # ---------------------------------------------------------------------------
 
+
 class TestStaticApiKeyApp:
     """Authorization header, no Set-Cookie → static_secret_header strategy."""
 
     def setup_method(self) -> None:
-        har = _har([
-            _entry(
-                "https://nearby-nifty.eastus2.cloudapp.azure.com/clients/abc/documents",
-                request_headers=[_auth_header("Bearer abc123"), _accept_header()],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://nearby-nifty.eastus2.cloudapp.azure.com/clients/abc/documents",
+                    request_headers=[_auth_header("Bearer abc123"), _accept_header()],
+                    status=200,
+                )
+            ]
+        )
         self.manifest, self.files = _compile(
             har,
             app_slug="adopt-bank",
@@ -199,7 +206,11 @@ class TestStaticApiKeyApp:
 
     def test_operations_use_resolve_auth(self) -> None:
         for path, content in self.files.items():
-            if path.startswith("operations/") and path.endswith(".py") and path != "operations/__init__.py":
+            if (
+                path.startswith("operations/")
+                and path.endswith(".py")
+                and path != "operations/__init__.py"
+            ):
                 assert "resolve_auth" in content, f"{path} must call resolve_auth()"
                 assert "TABBY_PROFILE_ID" not in content, (
                     f"{path}: TABBY_PROFILE_ID constant must not be embedded"
@@ -223,18 +234,21 @@ class TestStaticApiKeyApp:
 # Scenario 3: Session-cookie app (tabby_credentials)
 # ---------------------------------------------------------------------------
 
+
 class TestSessionCookieApp:
     """Set-Cookie in responses → tabby_credentials strategy."""
 
     def setup_method(self) -> None:
-        har = _har([
-            _entry(
-                "https://app.example.com/api/users",
-                request_headers=[{"name": "Cookie", "value": "session=xyz"}],
-                response_headers=[_set_cookie("session", "xyz")],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://app.example.com/api/users",
+                    request_headers=[{"name": "Cookie", "value": "session=xyz"}],
+                    response_headers=[_set_cookie("session", "xyz")],
+                    status=200,
+                )
+            ]
+        )
         self.manifest, self.files = _compile(
             har,
             app_slug="myapp",
@@ -256,20 +270,23 @@ class TestSessionCookieApp:
 # Scenario 4: Bearer token only in API calls (no login cookie) — static
 # ---------------------------------------------------------------------------
 
+
 class TestBearerOnlyInApiCalls:
     """API calls use Authorization: Bearer; login sets no cookies → static strategy."""
 
     def setup_method(self) -> None:
-        har = _har([
-            # Login page — no auth
-            _entry("https://app.example.com/login", status=200),
-            # API calls with Bearer, no Set-Cookie
-            _entry(
-                "https://app.example.com/api/data",
-                request_headers=[_auth_header("Bearer mytoken")],
-                status=200,
-            ),
-        ])
+        har = _har(
+            [
+                # Login page — no auth
+                _entry("https://app.example.com/login", status=200),
+                # API calls with Bearer, no Set-Cookie
+                _entry(
+                    "https://app.example.com/api/data",
+                    request_headers=[_auth_header("Bearer mytoken")],
+                    status=200,
+                ),
+            ]
+        )
         self.manifest, self.files = _compile(
             har,
             app_slug="bearer-app",
@@ -286,17 +303,20 @@ class TestBearerOnlyInApiCalls:
 # Scenario 5: Profile UUID must never appear in runtime credential path
 # ---------------------------------------------------------------------------
 
+
 class TestProfileSlugNotUuid:
     """The UUID is for admin ops; slug is for credentials/request at runtime."""
 
     def setup_method(self) -> None:
-        har = _har([
-            _entry(
-                "https://api.example.com/items",
-                request_headers=[_auth_header("Bearer tok")],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/items",
+                    request_headers=[_auth_header("Bearer tok")],
+                    status=200,
+                )
+            ]
+        )
         self.manifest, self.files = _compile(
             har,
             app_slug="my-service",
@@ -316,9 +336,7 @@ class TestProfileSlugNotUuid:
     def test_uuid_not_in_auth_py(self) -> None:
         uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         auth_py = self.files.get("noui_runtime/auth.py", "")
-        assert uuid not in auth_py, (
-            "noui_runtime/auth.py must not contain the profile DB UUID"
-        )
+        assert uuid not in auth_py, "noui_runtime/auth.py must not contain the profile DB UUID"
 
     def test_auth_plan_separates_slug_and_uuid(self) -> None:
         if "auth_plan.json" in self.files:
@@ -332,21 +350,24 @@ class TestProfileSlugNotUuid:
 # Scenario 6: Recorded non-auth headers preserved
 # ---------------------------------------------------------------------------
 
+
 class TestRecordedHeadersPreserved:
     """Accept, Content-Type, X-Request-ID etc. must not be dropped when auth is added."""
 
     def test_accept_and_content_type_in_auth_op(self) -> None:
-        har = _har([
-            _entry(
-                "https://api.example.com/data",
-                request_headers=[
-                    _auth_header("Bearer tok"),
-                    _accept_header("application/json"),
-                    {"name": "X-Api-Version", "value": "2024-01"},
-                ],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/data",
+                    request_headers=[
+                        _auth_header("Bearer tok"),
+                        _accept_header("application/json"),
+                        {"name": "X-Api-Version", "value": "2024-01"},
+                    ],
+                    status=200,
+                )
+            ]
+        )
         _, files = _compile(har, app_slug="app", profile_slug="app")
         for path, content in files.items():
             if path.startswith("operations/") and path != "operations/__init__.py":
@@ -354,13 +375,15 @@ class TestRecordedHeadersPreserved:
                 assert "application/json" in content, f"{path}: Accept value must be preserved"
 
     def test_no_auth_headers_dropped_for_unauth_op(self) -> None:
-        har = _har([
-            _entry(
-                "https://api.example.com/public",
-                request_headers=[_accept_header("application/json")],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/public",
+                    request_headers=[_accept_header("application/json")],
+                    status=200,
+                )
+            ]
+        )
         _, files = _compile(har, app_slug="public-api")
         for path, content in files.items():
             if path.startswith("operations/") and path != "operations/__init__.py":
@@ -371,17 +394,20 @@ class TestRecordedHeadersPreserved:
 # Scenario 7: noui_runtime/auth.py uses correct Tabby flow
 # ---------------------------------------------------------------------------
 
+
 class TestGeneratedAuthPy:
     """The generated noui_runtime/auth.py must use the 2-step flow, not the old route."""
 
     def setup_method(self) -> None:
-        har = _har([
-            _entry(
-                "https://api.example.com/data",
-                request_headers=[_auth_header()],
-                status=200,
-            )
-        ])
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/data",
+                    request_headers=[_auth_header()],
+                    status=200,
+                )
+            ]
+        )
         _, self.files = _compile(har, app_slug="app", profile_slug="app")
         self.auth_py = self.files.get("noui_runtime/auth.py", "")
 
@@ -416,11 +442,14 @@ class TestGeneratedAuthPy:
 # Scenario 8 & 9: Output files and manifest schema v2
 # ---------------------------------------------------------------------------
 
+
 class TestOutputFiles:
     def setup_method(self) -> None:
-        har = _har([
-            _entry("https://api.example.com/items", status=200),
-        ])
+        har = _har(
+            [
+                _entry("https://api.example.com/items", status=200),
+            ]
+        )
         self.manifest, self.files = _compile(har, app_slug="my-app")
 
     def test_server_py_present(self) -> None:

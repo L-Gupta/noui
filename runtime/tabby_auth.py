@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 
 import httpx
 

@@ -475,7 +475,7 @@ def cmd_login_list(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("recording", "capturing"):
             color = _yellow
         else:
-            color = str
+            color = str  # type: ignore[assignment]
         print(f"  {_cyan(sid[:8])}  {_bold(app)}  {color(status)}  {url}")
 
     print()
@@ -727,11 +727,9 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
         time.sleep(3)
         print(".", end="", flush=True)
         try:
-            resp = _tabby_http(
-                "GET", f"/admin/service-profiles/{profile_db_id}", token=admin_token
-            )
+            resp = _tabby_http("GET", f"/admin/service-profiles/{profile_db_id}", token=admin_token)
             assert isinstance(resp, dict)
-            final_state = resp.get("state", resp.get("status", ""))
+            final_state = resp.get("state", resp.get("status", ""))  # type: ignore[assignment]
             if final_state in ("HEALTHY", "ACTIVE"):
                 break
             if final_state in ("FAILED", "ERROR"):
@@ -824,7 +822,9 @@ def cmd_workflow_record(args: argparse.Namespace) -> int:
     print(f"  3. Navigate to {start_url} and perform your workflow")
     print("  4. When done, click Complete in the extension")
     print()
-    print(f"  Then run: {_bold(f'noui workflow export-mcp {session_id} --profile <tabby_profile_id>')}")
+    print(
+        f"  Then run: {_bold(f'noui workflow export-mcp {session_id} --profile <tabby_profile_id>')}"
+    )
     return 0
 
 
@@ -857,7 +857,7 @@ def cmd_workflow_list(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("recording", "capturing"):
             color = _yellow
         else:
-            color = str
+            color = str  # type: ignore[assignment]
         print(f"  {_cyan(sid[:8])}  {_bold(name)}  {color(status)}  {url}")
 
     print()
@@ -892,8 +892,10 @@ def cmd_workflow_captures(args: argparse.Namespace) -> int:  # noqa: ARG001
         elif status in ("capturing", "recording"):
             color = _yellow
         else:
-            color = str
-        print(f"  {_cyan(sid[:8])}  {_cyan(sid)}  {color(status)}  project:{project_id[:8] if project_id else '—'}")
+            color = str  # type: ignore[assignment]
+        print(
+            f"  {_cyan(sid[:8])}  {_cyan(sid)}  {color(status)}  project:{project_id[:8] if project_id else '—'}"
+        )
 
     print()
     return 0
@@ -948,7 +950,7 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or "?"
         print(f"  Auth       : {strategy} (profile: {slug})")
     else:
-        print(f"  Auth       : none (public API)")
+        print("  Auth       : none (public API)")
     print()
 
     if do_verify and server_id != "?":
@@ -1001,7 +1003,7 @@ def _run_mcp_verify(server_id: str) -> int:
                 print(f"    → {cmd}")
         return 0
     elif status == "NEEDS_SECRET":
-        print(_red(f"  Auth verification FAILED — missing secrets:"))
+        print(_red("  Auth verification FAILED — missing secrets:"))
         print(f"  {result.message}")
         for repair in result.suggested_repairs:
             cmd = repair.get("command") or ""
@@ -1234,7 +1236,11 @@ def _install_claude_desktop(
     mcp_servers = config.setdefault("mcpServers", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in Claude Desktop. Use --force to overwrite."))
+        print(
+            _yellow(
+                f"'{server_id}' is already configured in Claude Desktop. Use --force to overwrite."
+            )
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1269,7 +1275,11 @@ def _install_claude_code(
     mcp_servers = config.setdefault("mcpServers", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in Claude Code. Use --force to overwrite."))
+        print(
+            _yellow(
+                f"'{server_id}' is already configured in Claude Code. Use --force to overwrite."
+            )
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1301,13 +1311,13 @@ def _install_codex(
     already_exists = section_header in text
 
     if already_exists and not force:
-        print(_yellow(f"'{server_id}' is already configured in Codex CLI. Use --force to overwrite."))
+        print(
+            _yellow(f"'{server_id}' is already configured in Codex CLI. Use --force to overwrite.")
+        )
         return 0
 
     new_block = (
-        f"\n[mcp_servers.{server_id}]\n"
-        f'command = "{python_cmd}"\n'
-        f'args = ["{server_script}"]\n'
+        f'\n[mcp_servers.{server_id}]\ncommand = "{python_cmd}"\nargs = ["{server_script}"]\n'
     )
 
     if already_exists and force:
@@ -1344,7 +1354,9 @@ def _install_opencode(
     mcp_servers = config.setdefault("mcp", {})
 
     if server_id in mcp_servers and not force:
-        print(_yellow(f"'{server_id}' is already configured in OpenCode. Use --force to overwrite."))
+        print(
+            _yellow(f"'{server_id}' is already configured in OpenCode. Use --force to overwrite.")
+        )
         return 0
 
     mcp_servers[server_id] = {
@@ -1457,12 +1469,15 @@ def cmd_mcp_docs(args: argparse.Namespace) -> int:
     if check_only:
         if api_md_path.exists():
             existing = api_md_path.read_text(encoding="utf-8")
+
             # Strip the generated-at timestamp line before comparing (it always differs)
             def _strip_timestamp(text: str) -> str:
                 return "\n".join(
-                    line for line in text.splitlines()
+                    line
+                    for line in text.splitlines()
                     if not line.startswith("> **Generated by NoUI** on ")
                 )
+
             if _strip_timestamp(existing) == _strip_timestamp(new_content):
                 print(_green(f"API.md is up to date: {api_md_path}"))
                 return 0
@@ -1490,6 +1505,7 @@ def cmd_mcp_docs(args: argparse.Namespace) -> int:
 
 def _slug_to_title(slug: str) -> str:
     import re as _re
+
     return " ".join(word.capitalize() for word in _re.split(r"[-_]+", slug))
 
 
@@ -1554,7 +1570,7 @@ def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
     print(f"  required headers: {required.get('headers', [])}")
     print(f"  required cookies: {required.get('cookies', [])}")
     if fallbacks:
-        print(f"  fallbacks      :")
+        print("  fallbacks      :")
         for fb in fallbacks:
             if fb.get("type") == "static_secret_header":
                 env_var = fb.get("secret_env_var", "")
@@ -1567,12 +1583,17 @@ def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
     print(_bold("Running verification …"))
     try:
         from compiler.mcp.auth_verifier import verify_before_install
+
         result = asyncio.run(verify_before_install(server_dir))
     except Exception as exc:
         print(_red(f"Verification error: {exc}"))
         return 1
 
-    status_color = _green if result.status == "PASS" else (_yellow if result.status == "REPAIR_APPLIED" else _red)
+    status_color = (
+        _green
+        if result.status == "PASS"
+        else (_yellow if result.status == "REPAIR_APPLIED" else _red)
+    )
     print(f"  Status: {status_color(result.status)}")
     print(f"  {result.message}")
     if result.missing_artifacts:
@@ -1693,7 +1714,11 @@ def _find_active_profile(profile_id: str, admin_token: str) -> dict[str, Any] | 
             resp.get("data", []) if isinstance(resp, dict) else list(resp)  # type: ignore[union-attr]
         )
         return next(
-            (p for p in profiles if p.get("profile_id") == profile_id and p.get("version_state") == "ACTIVE"),
+            (
+                p
+                for p in profiles
+                if p.get("profile_id") == profile_id and p.get("version_state") == "ACTIVE"
+            ),
             None,
         )
     except RuntimeError:
@@ -1733,8 +1758,20 @@ def _bypass_canary_gate(profile_db_id: str) -> bool:
     )
     try:
         subprocess.run(
-            ["docker", "compose", "exec", "-T", "postgres", "psql",
-             "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "browser_hitl",
+                "-d",
+                "browser_hitl",
+                "-c",
+                sql,
+            ],
             cwd=str(TABBY_DIR),
             check=True,
             capture_output=True,
@@ -1816,12 +1853,22 @@ def _build_app_payload(profile_id: str, cfg: dict[str, Any]) -> dict[str, Any]:
     if requires_login:
         steps += [
             {"action": "fill", "selector": cfg["email_sel"], "value": "${USERNAME}"},
-            {"action": "fill", "selector": cfg["pass_sel"], "value": "${PASSWORD}", "sensitive": True},
+            {
+                "action": "fill",
+                "selector": cfg["pass_sel"],
+                "value": "${PASSWORD}",
+                "sensitive": True,
+            },
             {"action": "click", "selector": cfg["submit_sel"]},
         ]
         if cfg.get("otp_required") and cfg.get("otp_sel"):
             steps += [
-                {"action": "wait_for", "selector": cfg["otp_sel"], "timeout_ms": 120000, "sensitive": True},
+                {
+                    "action": "wait_for",
+                    "selector": cfg["otp_sel"],
+                    "timeout_ms": 120000,
+                    "sensitive": True,
+                },
                 {"action": "click", "selector": "[type='submit']"},
             ]
     if cfg.get("success_sel"):
@@ -1895,20 +1942,25 @@ def _ensure_service_profile(
             print(_red(f"  App creation failed: {exc}"))
             return False
 
-        entry.update({
-            "app_id": app_id,
-            "login_url": cfg["login_url"],
-            "username": cfg.get("username", ""),
-            "credential_ref": app_payload["login_config"]["credential_ref"],
-            "login_config": app_payload["login_config"],
-        })
+        entry.update(
+            {
+                "app_id": app_id,
+                "login_url": cfg["login_url"],
+                "username": cfg.get("username", ""),
+                "credential_ref": app_payload["login_config"]["credential_ref"],
+                "login_config": app_payload["login_config"],
+            }
+        )
         if cfg.get("username") and cfg.get("password"):
             secret = _secret_name(profile_id)
             prefix = _env_prefix(secret)
-            _write_env_vars(ENV_LOCAL, {
-                f"{prefix}_USERNAME": cfg["username"],
-                f"{prefix}_PASSWORD": cfg["password"],
-            })
+            _write_env_vars(
+                ENV_LOCAL,
+                {
+                    f"{prefix}_USERNAME": cfg["username"],
+                    f"{prefix}_PASSWORD": cfg["password"],
+                },
+            )
 
     login_config = entry.get("login_config", {})
 
@@ -2050,10 +2102,13 @@ def cmd_tabby_start(args: argparse.Namespace) -> int:  # noqa: ARG001
     if not ENV_LOCAL.exists():
         if ENV_EXAMPLE.exists():
             import shutil
+
             shutil.copy(ENV_EXAMPLE, ENV_LOCAL)
             print(_yellow(f"Created {ENV_LOCAL} from template."))
             print(_yellow("Edit it and set JWT_SIGNING_KEY, TENANT_ENCRYPTION_KEY,"))
-            print(_yellow("AGENT_SECRET_HMAC_KEY, ADMIN_BOOTSTRAP_EMAIL, ADMIN_BOOTSTRAP_PASSWORD."))
+            print(
+                _yellow("AGENT_SECRET_HMAC_KEY, ADMIN_BOOTSTRAP_EMAIL, ADMIN_BOOTSTRAP_PASSWORD.")
+            )
             print()
         else:
             print(_red(f"No .env.local found at {ENV_LOCAL}"))
@@ -2091,7 +2146,11 @@ def cmd_tabby_start(args: argparse.Namespace) -> int:  # noqa: ARG001
         start_new_session=True,
     )
     TABBY_PID_FILE.write_text(str(proc.pid))
-    print(f"Starting Tabby API (PID {proc.pid}) … logs → {_cyan(str(TABBY_LOG_FILE))}", end="", flush=True)
+    print(
+        f"Starting Tabby API (PID {proc.pid}) … logs → {_cyan(str(TABBY_LOG_FILE))}",
+        end="",
+        flush=True,
+    )
 
     for _ in range(60):
         time.sleep(1)
@@ -2167,12 +2226,16 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
     admin_email = env_local.get("ADMIN_BOOTSTRAP_EMAIL", "")
     admin_password = env_local.get("ADMIN_BOOTSTRAP_PASSWORD", "")
     if not admin_email or not admin_password:
-        print(_red(f"ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be set in {ENV_LOCAL}"))
+        print(
+            _red(f"ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD must be set in {ENV_LOCAL}")
+        )
         return 1
 
     print(f"Logging in as {_cyan(admin_email)} …", end=" ", flush=True)
     try:
-        login_resp = _tabby_http("POST", "/login", {"email": admin_email, "password": admin_password})
+        login_resp = _tabby_http(
+            "POST", "/login", {"email": admin_email, "password": admin_password}
+        )
         assert isinstance(login_resp, dict)
         admin_token = login_resp.get("token") or login_resp.get("access_token", "")
     except (RuntimeError, AssertionError) as exc:
@@ -2221,16 +2284,24 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
 
     if not (client_id and client_secret):
         try:
-            existing_clients = _tabby_http("GET", f"/admin/agent-clients/{tenant_id}", token=admin_token)
+            existing_clients = _tabby_http(
+                "GET", f"/admin/agent-clients/{tenant_id}", token=admin_token
+            )
             if not isinstance(existing_clients, list):
                 existing_clients = []
         except RuntimeError:
             existing_clients = []
 
-        match = next((c for c in existing_clients if c.get("name") == TABBY_AGENT_CLIENT_NAME), None)
+        match = next(
+            (c for c in existing_clients if c.get("name") == TABBY_AGENT_CLIENT_NAME), None
+        )
 
         if match and not args.force:
-            print(f"Agent client '{TABBY_AGENT_CLIENT_NAME}' already exists — rotating secret …", end=" ", flush=True)
+            print(
+                f"Agent client '{TABBY_AGENT_CLIENT_NAME}' already exists — rotating secret …",
+                end=" ",
+                flush=True,
+            )
             try:
                 rotated = _tabby_http(
                     "POST",
@@ -2278,11 +2349,13 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
             print(_red("No client_secret in response — cannot proceed."))
             return 1
 
-    cache.update({
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "default_profiles": allowed_profiles,
-    })
+    cache.update(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "default_profiles": allowed_profiles,
+        }
+    )
     _save_cache(cache)
 
     print()
@@ -2295,11 +2368,14 @@ def cmd_tabby_setup(args: argparse.Namespace) -> int:
             print(_yellow(f"  Skipped '{profile_id}' — re-run setup to configure it."))
 
     env_file = Path(args.env_file) if args.env_file else NOUI_DIR / ".env"
-    _write_env_vars(env_file, {
-        "TABBY_API_URL": TABBY_API_HOST,
-        "TABBY_CLIENT_ID": client_id,
-        "TABBY_CLIENT_SECRET": client_secret,
-    })
+    _write_env_vars(
+        env_file,
+        {
+            "TABBY_API_URL": TABBY_API_HOST,
+            "TABBY_CLIENT_ID": client_id,
+            "TABBY_CLIENT_SECRET": client_secret,
+        },
+    )
 
     print()
     print(_green("✓ Setup complete!"))
@@ -2386,7 +2462,9 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             defaults = cache.get("default_profiles", [])
             profile_id = defaults[0] if len(defaults) == 1 else None
         if not profile_id:
-            print(_red("Could not determine profile. Run 'noui tabby setup' first or pass --profile."))
+            print(
+                _red("Could not determine profile. Run 'noui tabby setup' first or pass --profile.")
+            )
             return 1
 
     entry = apps.get(profile_id)
@@ -2420,12 +2498,14 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
 
     env = {**os.environ}
     env.update(_load_env_local())
-    env.update({
-        "SESSION_ID": session_id,
-        "APP_ID": app_id,
-        "TENANT_ID": tenant_id,
-        "STREAMING_MODE": "cdp",
-    })
+    env.update(
+        {
+            "SESSION_ID": session_id,
+            "APP_ID": app_id,
+            "TENANT_ID": tenant_id,
+            "STREAMING_MODE": "cdp",
+        }
+    )
 
     creds_mount = Path("/tmp/tabby-local-secrets")
     secret_name = entry.get("credential_ref", "k8s:secret/no-auth").replace("k8s:secret/", "")
@@ -2513,8 +2593,20 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         sql = f"UPDATE sessions SET state='HEALTHY' WHERE id='{session_id}'"
         try:
             subprocess.run(
-                ["docker", "compose", "exec", "-T", "postgres", "psql",
-                 "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+                [
+                    "docker",
+                    "compose",
+                    "exec",
+                    "-T",
+                    "postgres",
+                    "psql",
+                    "-U",
+                    "browser_hitl",
+                    "-d",
+                    "browser_hitl",
+                    "-c",
+                    sql,
+                ],
                 cwd=str(TABBY_DIR),
                 check=True,
                 capture_output=True,
@@ -2528,7 +2620,8 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     print(_green(f"✓ Session for '{profile_id}' is HEALTHY"))
     print()
     print("  You can now record a workflow with Tabby auth:")
-    print(f"    {_bold('noui workflow record \"My Workflow\" <url>')}")
+    _cmd = 'noui workflow record "My Workflow" <url>'
+    print(f"    {_bold(_cmd)}")
     return 0
 
 
@@ -2680,7 +2773,9 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["claude-desktop", "claude-code", "codex", "opencode"],
         help="Target agent",
     )
-    mcp_install_p.add_argument("--force", action="store_true", help="Overwrite existing configuration")
+    mcp_install_p.add_argument(
+        "--force", action="store_true", help="Overwrite existing configuration"
+    )
 
     mcp_docs_p = mcp_sub.add_parser("docs", help="Regenerate API.md from current tools.json")
     mcp_docs_p.add_argument("server_id", help="MCP server ID")
@@ -2710,7 +2805,9 @@ def _build_parser() -> argparse.ArgumentParser:
     tabby_sub.add_parser("start", help="Start Docker Compose infra and Tabby API in background")
 
     tabby_stop_p = tabby_sub.add_parser("stop", help="Stop the Tabby API process")
-    tabby_stop_p.add_argument("--infra", action="store_true", help="Also stop Docker Compose services")
+    tabby_stop_p.add_argument(
+        "--infra", action="store_true", help="Also stop Docker Compose services"
+    )
 
     tabby_setup_p = tabby_sub.add_parser(
         "setup",

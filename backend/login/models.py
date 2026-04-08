@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -12,7 +12,7 @@ from backend.database import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -27,7 +27,9 @@ class LoginSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid)
     app_name: Mapped[str] = mapped_column(String(255))
     login_url: Mapped[str] = mapped_column(String(2000))
-    status: Mapped[str] = mapped_column(String(20), default="idle")  # idle | recording | completed | failed
+    status: Mapped[str] = mapped_column(
+        String(20), default="idle"
+    )  # idle | recording | completed | failed
     notes: Mapped[str] = mapped_column(Text, default="")
     project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     process_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

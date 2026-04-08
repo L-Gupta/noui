@@ -7,36 +7,81 @@ Pure functions — no DB dependencies. Operates on HAR log dicts
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 # ── Asset / noise patterns ──────────────────────────────────────────────────
 
-_ASSET_EXTENSIONS = frozenset({
-    ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-    ".woff", ".woff2", ".ttf", ".eot", ".map", ".webp", ".avif",
-    ".mp4", ".webm", ".mp3", ".ogg",
-})
+_ASSET_EXTENSIONS = frozenset(
+    {
+        ".js",
+        ".css",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".map",
+        ".webp",
+        ".avif",
+        ".mp4",
+        ".webm",
+        ".mp3",
+        ".ogg",
+    }
+)
 
-_NOISE_URL_FRAGMENTS = frozenset({
-    "analytics", "tracking", "telemetry", "beacon", "pixel",
-    "hotjar", "segment", "mixpanel", "google-analytics",
-    "doubleclick", "facebook.com/tr", "googletagmanager",
-    "sentry", "bugsnag", "newrelic", "datadog",
-})
+_NOISE_URL_FRAGMENTS = frozenset(
+    {
+        "analytics",
+        "tracking",
+        "telemetry",
+        "beacon",
+        "pixel",
+        "hotjar",
+        "segment",
+        "mixpanel",
+        "google-analytics",
+        "doubleclick",
+        "facebook.com/tr",
+        "googletagmanager",
+        "sentry",
+        "bugsnag",
+        "newrelic",
+        "datadog",
+    }
+)
 
-_API_CONTENT_TYPES = frozenset({
-    "application/json", "application/xml", "text/xml",
-    "application/hal+json", "application/vnd.api+json",
-    "application/problem+json", "application/graphql+json",
-})
+_API_CONTENT_TYPES = frozenset(
+    {
+        "application/json",
+        "application/xml",
+        "text/xml",
+        "application/hal+json",
+        "application/vnd.api+json",
+        "application/problem+json",
+        "application/graphql+json",
+    }
+)
 
-_SKIP_CONTENT_TYPES = frozenset({
-    "text/html", "text/css", "application/javascript",
-    "text/javascript", "application/x-javascript",
-})
+_SKIP_CONTENT_TYPES = frozenset(
+    {
+        "text/html",
+        "text/css",
+        "application/javascript",
+        "text/javascript",
+        "application/x-javascript",
+    }
+)
 
 
 # ── Filtering ────────────────────────────────────────────────────────────────
+
 
 def filter_har_entries(
     har_log: dict,
@@ -135,10 +180,7 @@ def _is_api_call(entry: dict) -> bool:
         return True
 
     # If we got a JSON response for a GET, it's likely API
-    if method == "GET" and resp_content_type and "json" in resp_content_type:
-        return True
-
-    return False
+    return method == "GET" and bool(resp_content_type) and "json" in resp_content_type
 
 
 def _get_content_type(obj: dict, key: str = "content") -> str:
@@ -153,6 +195,7 @@ def _get_content_type(obj: dict, key: str = "content") -> str:
 
 
 # ── Annotation ───────────────────────────────────────────────────────────────
+
 
 def annotate_har_entries(
     entries: list[dict],
@@ -179,9 +222,6 @@ def annotate_har_entries(
 
     for step_num, entry in enumerate(entries):
         entry_time = entry.get("startedDateTime", "")
-        request = entry.get("request", {})
-        url = request.get("url", "")
-
         annotations: dict = {
             "step_number": step_num,
             "is_primary": True,  # refined below if we can detect side-effects
@@ -197,11 +237,13 @@ def annotate_har_entries(
             # Extract detected params from related input events
             for click in related:
                 if click.get("event_type") in ("input", "change") and click.get("field_name"):
-                    annotations["detected_params"].append({
-                        "field_name": click["field_name"],
-                        "value": click.get("value", ""),
-                        "source": "form_input",
-                    })
+                    annotations["detected_params"].append(
+                        {
+                            "field_name": click["field_name"],
+                            "value": click.get("value", ""),
+                            "source": "form_input",
+                        }
+                    )
 
         entry["_annotations"] = annotations
 
@@ -214,7 +256,7 @@ def _find_nearby_clicks(
     window_ms: int = 2000,
 ) -> list[dict]:
     """Find click events that happened within ``window_ms`` before the HAR entry."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     try:
         har_dt = _to_naive_utc(har_timestamp)
@@ -244,10 +286,8 @@ def _find_nearby_clicks(
     return results
 
 
-def _to_naive_utc(ts) -> "datetime | None":
+def _to_naive_utc(ts: object) -> datetime | None:
     """Parse a timestamp to naive UTC datetime to avoid tz comparison errors."""
-    from datetime import datetime, timezone
-
     if isinstance(ts, str):
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     elif isinstance(ts, datetime):
@@ -256,11 +296,12 @@ def _to_naive_utc(ts) -> "datetime | None":
         return None
 
     if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        dt = dt.astimezone(UTC).replace(tzinfo=None)
     return dt
 
 
 # ── Multi-API detection ──────────────────────────────────────────────────────
+
 
 def detect_api_groups(entries: list[dict]) -> list[dict]:
     """Group filtered HAR entries by base URL to identify distinct APIs.
@@ -290,7 +331,7 @@ def detect_api_groups(entries: list[dict]) -> list[dict]:
 
         rel_path = path
         if api_base and path.startswith(api_base):
-            rel_path = path[len(api_base):]
+            rel_path = path[len(api_base) :]
         if not rel_path:
             rel_path = "/"
 
@@ -308,14 +349,14 @@ def detect_api_groups(entries: list[dict]) -> list[dict]:
         g["status_codes"].add(status)
 
         endpoint_key = (method, rel_path)
-        if not any(
-            (ep["method"], ep["path"]) == endpoint_key for ep in g["endpoints"]
-        ):
-            g["endpoints"].append({
-                "method": method,
-                "path": rel_path,
-                "status_codes": [status],
-            })
+        if not any((ep["method"], ep["path"]) == endpoint_key for ep in g["endpoints"]):
+            g["endpoints"].append(
+                {
+                    "method": method,
+                    "path": rel_path,
+                    "status_codes": [status],
+                }
+            )
         else:
             for ep in g["endpoints"]:
                 if (ep["method"], ep["path"]) == endpoint_key:

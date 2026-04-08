@@ -36,7 +36,9 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ):
     if not project_id and not process_id and not chat_session_id:
-        raise HTTPException(400, "Provide project_id, process_id, or chat_session_id query parameter")
+        raise HTTPException(
+            400, "Provide project_id, process_id, or chat_session_id query parameter"
+        )
     stmt = select(Message)
     if chat_session_id:
         stmt = stmt.where(Message.chat_session_id == chat_session_id)

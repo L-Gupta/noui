@@ -6,7 +6,6 @@ All interactions use real HTTP API calls to enable meaningful HAR captures.
 
 import uuid
 from datetime import date, timedelta
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
@@ -18,60 +17,204 @@ router = APIRouter(prefix="/example-site", tags=["example-site"])
 
 CUSTOMERS: dict[str, dict] = {
     "cust-001": {
-        "id": "cust-001", "name": "Acme Corporation", "industry": "Manufacturing",
-        "contact": "Jane Smith", "email": "jane@acme.com", "phone": "+1-555-0101",
-        "address": "123 Industrial Blvd", "city": "Chicago", "state": "IL", "zip": "60601", "country": "US",
+        "id": "cust-001",
+        "name": "Acme Corporation",
+        "industry": "Manufacturing",
+        "contact": "Jane Smith",
+        "email": "jane@acme.com",
+        "phone": "+1-555-0101",
+        "address": "123 Industrial Blvd",
+        "city": "Chicago",
+        "state": "IL",
+        "zip": "60601",
+        "country": "US",
     },
     "cust-002": {
-        "id": "cust-002", "name": "TechNova Solutions", "industry": "Technology",
-        "contact": "Michael Chen", "email": "mchen@technova.io", "phone": "+1-555-0202",
-        "address": "456 Innovation Way", "city": "San Francisco", "state": "CA", "zip": "94105", "country": "US",
+        "id": "cust-002",
+        "name": "TechNova Solutions",
+        "industry": "Technology",
+        "contact": "Michael Chen",
+        "email": "mchen@technova.io",
+        "phone": "+1-555-0202",
+        "address": "456 Innovation Way",
+        "city": "San Francisco",
+        "state": "CA",
+        "zip": "94105",
+        "country": "US",
     },
     "cust-003": {
-        "id": "cust-003", "name": "Global Logistics Inc", "industry": "Logistics",
-        "contact": "Sarah Johnson", "email": "sjohnson@globallog.com", "phone": "+1-555-0303",
-        "address": "789 Freight Ave", "city": "Dallas", "state": "TX", "zip": "75201", "country": "US",
+        "id": "cust-003",
+        "name": "Global Logistics Inc",
+        "industry": "Logistics",
+        "contact": "Sarah Johnson",
+        "email": "sjohnson@globallog.com",
+        "phone": "+1-555-0303",
+        "address": "789 Freight Ave",
+        "city": "Dallas",
+        "state": "TX",
+        "zip": "75201",
+        "country": "US",
     },
     "cust-004": {
-        "id": "cust-004", "name": "Meridian Healthcare", "industry": "Healthcare",
-        "contact": "Dr. Robert Kim", "email": "rkim@meridian.health", "phone": "+1-555-0404",
-        "address": "321 Medical Center Dr", "city": "Boston", "state": "MA", "zip": "02101", "country": "US",
+        "id": "cust-004",
+        "name": "Meridian Healthcare",
+        "industry": "Healthcare",
+        "contact": "Dr. Robert Kim",
+        "email": "rkim@meridian.health",
+        "phone": "+1-555-0404",
+        "address": "321 Medical Center Dr",
+        "city": "Boston",
+        "state": "MA",
+        "zip": "02101",
+        "country": "US",
     },
     "cust-005": {
-        "id": "cust-005", "name": "Pinnacle Financial Group", "industry": "Finance",
-        "contact": "Amanda Torres", "email": "atorres@pinnacle.fin", "phone": "+1-555-0505",
-        "address": "555 Wall Street", "city": "New York", "state": "NY", "zip": "10005", "country": "US",
+        "id": "cust-005",
+        "name": "Pinnacle Financial Group",
+        "industry": "Finance",
+        "contact": "Amanda Torres",
+        "email": "atorres@pinnacle.fin",
+        "phone": "+1-555-0505",
+        "address": "555 Wall Street",
+        "city": "New York",
+        "state": "NY",
+        "zip": "10005",
+        "country": "US",
     },
 }
 
 CATEGORIES: list[dict] = [
-    {"id": "cat-sw", "name": "Software Licenses", "description": "Enterprise software and SaaS subscriptions"},
+    {
+        "id": "cat-sw",
+        "name": "Software Licenses",
+        "description": "Enterprise software and SaaS subscriptions",
+    },
     {"id": "cat-hw", "name": "Hardware", "description": "Servers, networking, and peripherals"},
-    {"id": "cat-svc", "name": "Professional Services", "description": "Consulting, implementation, and training"},
+    {
+        "id": "cat-svc",
+        "name": "Professional Services",
+        "description": "Consulting, implementation, and training",
+    },
     {"id": "cat-sup", "name": "Support Plans", "description": "Maintenance and support agreements"},
 ]
 
 PRODUCTS: dict[str, dict] = {
-    "prod-001": {"id": "prod-001", "category_id": "cat-sw", "name": "Enterprise CRM Suite", "sku": "SW-CRM-ENT", "unit_price": 15000.00, "description": "Full CRM platform — 50 user license"},
-    "prod-002": {"id": "prod-002", "category_id": "cat-sw", "name": "Analytics Dashboard Pro", "sku": "SW-ANA-PRO", "unit_price": 8500.00, "description": "Real-time analytics with custom dashboards"},
-    "prod-003": {"id": "prod-003", "category_id": "cat-sw", "name": "Document Management System", "sku": "SW-DMS-STD", "unit_price": 4200.00, "description": "Cloud document storage and workflow"},
-    "prod-004": {"id": "prod-004", "category_id": "cat-hw", "name": "Application Server — 64 Core", "sku": "HW-SRV-64", "unit_price": 24500.00, "description": "High-performance rack server with 256GB RAM"},
-    "prod-005": {"id": "prod-005", "category_id": "cat-hw", "name": "Network Switch — 48 Port", "sku": "HW-NSW-48", "unit_price": 3800.00, "description": "Managed L3 switch with 10GbE uplinks"},
-    "prod-006": {"id": "prod-006", "category_id": "cat-hw", "name": "Storage Array — 50TB", "sku": "HW-STO-50", "unit_price": 18700.00, "description": "Enterprise NVMe storage array"},
-    "prod-007": {"id": "prod-007", "category_id": "cat-hw", "name": "UPS Battery Backup — 3kVA", "sku": "HW-UPS-3K", "unit_price": 2100.00, "description": "Rackmount UPS with network card"},
-    "prod-008": {"id": "prod-008", "category_id": "cat-svc", "name": "Implementation Package — Standard", "sku": "SVC-IMP-STD", "unit_price": 12000.00, "description": "40 hours of implementation consulting"},
-    "prod-009": {"id": "prod-009", "category_id": "cat-svc", "name": "Implementation Package — Premium", "sku": "SVC-IMP-PRM", "unit_price": 28000.00, "description": "100 hours including data migration"},
-    "prod-010": {"id": "prod-010", "category_id": "cat-svc", "name": "Training — On-Site (5 days)", "sku": "SVC-TRN-5D", "unit_price": 7500.00, "description": "On-site training for up to 20 users"},
-    "prod-011": {"id": "prod-011", "category_id": "cat-sup", "name": "Gold Support — Annual", "sku": "SUP-GLD-1Y", "unit_price": 9600.00, "description": "24/7 support, 4hr SLA, dedicated TAM"},
-    "prod-012": {"id": "prod-012", "category_id": "cat-sup", "name": "Silver Support — Annual", "sku": "SUP-SLV-1Y", "unit_price": 4800.00, "description": "Business hours support, 8hr SLA"},
-    "prod-013": {"id": "prod-013", "category_id": "cat-sup", "name": "Bronze Support — Annual", "sku": "SUP-BRZ-1Y", "unit_price": 2400.00, "description": "Email-only support, next business day"},
+    "prod-001": {
+        "id": "prod-001",
+        "category_id": "cat-sw",
+        "name": "Enterprise CRM Suite",
+        "sku": "SW-CRM-ENT",
+        "unit_price": 15000.00,
+        "description": "Full CRM platform — 50 user license",
+    },
+    "prod-002": {
+        "id": "prod-002",
+        "category_id": "cat-sw",
+        "name": "Analytics Dashboard Pro",
+        "sku": "SW-ANA-PRO",
+        "unit_price": 8500.00,
+        "description": "Real-time analytics with custom dashboards",
+    },
+    "prod-003": {
+        "id": "prod-003",
+        "category_id": "cat-sw",
+        "name": "Document Management System",
+        "sku": "SW-DMS-STD",
+        "unit_price": 4200.00,
+        "description": "Cloud document storage and workflow",
+    },
+    "prod-004": {
+        "id": "prod-004",
+        "category_id": "cat-hw",
+        "name": "Application Server — 64 Core",
+        "sku": "HW-SRV-64",
+        "unit_price": 24500.00,
+        "description": "High-performance rack server with 256GB RAM",
+    },
+    "prod-005": {
+        "id": "prod-005",
+        "category_id": "cat-hw",
+        "name": "Network Switch — 48 Port",
+        "sku": "HW-NSW-48",
+        "unit_price": 3800.00,
+        "description": "Managed L3 switch with 10GbE uplinks",
+    },
+    "prod-006": {
+        "id": "prod-006",
+        "category_id": "cat-hw",
+        "name": "Storage Array — 50TB",
+        "sku": "HW-STO-50",
+        "unit_price": 18700.00,
+        "description": "Enterprise NVMe storage array",
+    },
+    "prod-007": {
+        "id": "prod-007",
+        "category_id": "cat-hw",
+        "name": "UPS Battery Backup — 3kVA",
+        "sku": "HW-UPS-3K",
+        "unit_price": 2100.00,
+        "description": "Rackmount UPS with network card",
+    },
+    "prod-008": {
+        "id": "prod-008",
+        "category_id": "cat-svc",
+        "name": "Implementation Package — Standard",
+        "sku": "SVC-IMP-STD",
+        "unit_price": 12000.00,
+        "description": "40 hours of implementation consulting",
+    },
+    "prod-009": {
+        "id": "prod-009",
+        "category_id": "cat-svc",
+        "name": "Implementation Package — Premium",
+        "sku": "SVC-IMP-PRM",
+        "unit_price": 28000.00,
+        "description": "100 hours including data migration",
+    },
+    "prod-010": {
+        "id": "prod-010",
+        "category_id": "cat-svc",
+        "name": "Training — On-Site (5 days)",
+        "sku": "SVC-TRN-5D",
+        "unit_price": 7500.00,
+        "description": "On-site training for up to 20 users",
+    },
+    "prod-011": {
+        "id": "prod-011",
+        "category_id": "cat-sup",
+        "name": "Gold Support — Annual",
+        "sku": "SUP-GLD-1Y",
+        "unit_price": 9600.00,
+        "description": "24/7 support, 4hr SLA, dedicated TAM",
+    },
+    "prod-012": {
+        "id": "prod-012",
+        "category_id": "cat-sup",
+        "name": "Silver Support — Annual",
+        "sku": "SUP-SLV-1Y",
+        "unit_price": 4800.00,
+        "description": "Business hours support, 8hr SLA",
+    },
+    "prod-013": {
+        "id": "prod-013",
+        "category_id": "cat-sup",
+        "name": "Bronze Support — Annual",
+        "sku": "SUP-BRZ-1Y",
+        "unit_price": 2400.00,
+        "description": "Email-only support, next business day",
+    },
 }
 
 SHIPPING_METHODS: list[dict] = [
     {"id": "ship-std", "name": "Standard Ground", "cost": 0.00, "days": "7-10 business days"},
     {"id": "ship-exp", "name": "Express Shipping", "cost": 250.00, "days": "3-5 business days"},
     {"id": "ship-ovn", "name": "Overnight Priority", "cost": 750.00, "days": "1 business day"},
-    {"id": "ship-wgl", "name": "White Glove Delivery", "cost": 1500.00, "days": "Scheduled — includes installation"},
+    {
+        "id": "ship-wgl",
+        "name": "White Glove Delivery",
+        "cost": 1500.00,
+        "days": "Scheduled — includes installation",
+    },
 ]
 
 PAYMENT_TERMS: list[dict] = [
@@ -97,6 +240,7 @@ quotes_store: dict[str, dict] = {}
 
 # ── Pydantic models ────────────────────────────────────────────────────────
 
+
 class QuoteCreate(BaseModel):
     customer_id: str
     quote_name: str
@@ -120,6 +264,7 @@ class QuoteOptions(BaseModel):
 
 
 # ── Helper ──────────────────────────────────────────────────────────────────
+
 
 def _compute_totals(quote: dict) -> dict:
     subtotal = 0.0
@@ -162,9 +307,18 @@ def _quote_response(quote: dict) -> dict:
 
 # ── API endpoints ──────────────────────────────────────────────────────────
 
+
 @router.get("/api/customers")
 async def search_customers(q: str = ""):
-    results = [c for c in CUSTOMERS.values() if q.lower() in c["name"].lower() or q.lower() in c["industry"].lower()] if q else list(CUSTOMERS.values())
+    results = (
+        [
+            c
+            for c in CUSTOMERS.values()
+            if q.lower() in c["name"].lower() or q.lower() in c["industry"].lower()
+        ]
+        if q
+        else list(CUSTOMERS.values())
+    )
     return results
 
 
@@ -214,7 +368,7 @@ async def create_quote(body: QuoteCreate):
     quote_id = f"Q-{uuid.uuid4().hex[:8].upper()}"
     if body.customer_id not in CUSTOMERS:
         raise HTTPException(404, "Customer not found")
-    quote = {
+    quote: dict[str, object] = {
         "id": quote_id,
         "customer_id": body.customer_id,
         "quote_name": body.quote_name,
@@ -297,6 +451,7 @@ async def submit_quote(quote_id: str):
 
 
 # ── HTML page ──────────────────────────────────────────────────────────────
+
 
 @router.get("", response_class=HTMLResponse)
 async def example_site_page():

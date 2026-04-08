@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import Any, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any
 
 import anthropic
 
@@ -230,10 +231,7 @@ async def stream_response_with_tools(
                     return
 
                 # Extract tool_use blocks
-                tool_use_blocks = [
-                    block for block in response.content
-                    if block.type == "tool_use"
-                ]
+                tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
                 if not tool_use_blocks or tool_executor is None:
                     return
 
@@ -244,14 +242,20 @@ async def stream_response_with_tools(
                     if block.type == "text":
                         return {"type": "text", "text": block.text}
                     if block.type == "tool_use":
-                        return {"type": "tool_use", "id": block.id,
-                                "name": block.name, "input": block.input}
+                        return {
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        }
                     return {"type": block.type}
 
-                messages.append({
-                    "role": "assistant",
-                    "content": [_serialize_block(b) for b in response.content],
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [_serialize_block(b) for b in response.content],
+                    }
+                )
 
                 # Execute each tool and collect results
                 tool_results = []
@@ -261,11 +265,13 @@ async def stream_response_with_tools(
                     except Exception as e:
                         logger.error("Tool execution error (%s): %s", tool_block.name, e)
                         result = json.dumps({"error": str(e)})
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_block.id,
-                        "content": result,
-                    })
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_block.id,
+                            "content": result,
+                        }
+                    )
 
                 # Append tool results as user message
                 messages.append({"role": "user", "content": tool_results})

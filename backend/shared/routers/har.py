@@ -23,9 +23,9 @@ router = APIRouter(tags=["har"])
 
 async def _resolve_session_type(session_id: str, db: AsyncSession) -> str | None:
     """Detect whether session_id belongs to a login, workflow, or capture session."""
+    from backend.elicitation.models import CaptureSession
     from backend.login.models import LoginSession
     from backend.workflow.models import WorkflowSession
-    from backend.elicitation.models import CaptureSession
 
     r = await db.execute(select(LoginSession).where(LoginSession.id == session_id))
     if r.scalar_one_or_none():
@@ -61,7 +61,9 @@ async def upload_har(
     try:
         json.loads(content)
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid HAR file (not valid JSON): {exc}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Invalid HAR file (not valid JSON): {exc}"
+        ) from exc
 
     file_path.write_bytes(content)
     logger.info("Saved HAR for session %s (%s) to %s", session_id, session_type, file_path)
@@ -154,13 +156,23 @@ async def upload_har_compat(
         old.file_path = str(file_path)
         await db.commit()
         await db.refresh(old)
-        return {"id": old.id, "session_id": old.session_id, "session_type": old.session_type, "file_path": old.file_path}
+        return {
+            "id": old.id,
+            "session_id": old.session_id,
+            "session_type": old.session_type,
+            "file_path": old.file_path,
+        }
 
     har_record = HarFile(session_id=session_id, session_type=session_type, file_path=str(file_path))
     db.add(har_record)
     await db.commit()
     await db.refresh(har_record)
-    return {"id": har_record.id, "session_id": har_record.session_id, "session_type": har_record.session_type, "file_path": har_record.file_path}
+    return {
+        "id": har_record.id,
+        "session_id": har_record.session_id,
+        "session_type": har_record.session_type,
+        "file_path": har_record.file_path,
+    }
 
 
 @router.get("/sessions/{session_id}/har/meta", response_model=HarFileOut)

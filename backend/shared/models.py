@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -12,7 +12,7 @@ from backend.database import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _new_uuid() -> str:
@@ -31,7 +31,9 @@ class ClickEvent(Base):
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     session_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # login | workflow
 
-    event_type: Mapped[str] = mapped_column(String(20), default="click")  # click | input | change | submit
+    event_type: Mapped[str] = mapped_column(
+        String(20), default="click"
+    )  # click | input | change | submit
     url: Mapped[str] = mapped_column(String(2000), default="")
     tag_name: Mapped[str] = mapped_column(String(50))
     element_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -44,13 +46,17 @@ class ClickEvent(Base):
     input_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     value: Mapped[str | None] = mapped_column(String(500), nullable=True)
     field_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    field_role: Mapped[str | None] = mapped_column(String(30), nullable=True)  # username | password | otp | unknown_sensitive
+    field_role: Mapped[str | None] = mapped_column(
+        String(30), nullable=True
+    )  # username | password | otp | unknown_sensitive
     is_redacted: Mapped[bool] = mapped_column(Boolean, default=False)
     autocomplete: Mapped[str | None] = mapped_column(String(100), nullable=True)
     placeholder: Mapped[str | None] = mapped_column(String(255), nullable=True)
     aria_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_attr: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    data_attrs_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON: {"data-testid": "..."}
+    data_attrs_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON: {"data-testid": "..."}
     timestamp: Mapped[datetime] = mapped_column(default=_utcnow)
 
 
