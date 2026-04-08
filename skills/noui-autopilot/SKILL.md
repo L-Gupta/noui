@@ -53,6 +53,22 @@ Verify:
 
 ---
 
+## Step 1.5 — Preflight: Verify Extension
+
+Before starting capture, verify the extension is loaded and supports all commands:
+
+```bash
+.venv/bin/python cli/main.py autopilot verify-extension
+```
+
+This tests `get_page_info`, `get_page_summary`, `press_key`, and `query_elements`. If any command fails with "UNSUPPORTED", ask the user to reload the extension in `chrome://extensions` and re-run.
+
+**Do NOT skip this step.** Starting capture with a stale extension will silently fail — HAR recording won't work, and you won't know until `stop-capture`, wasting the entire session.
+
+> **⚠ Extension reload warning:** If the Chrome extension is reloaded at any point during an active capture session, the capture is effectively dead — the extension loses its in-memory HAR buffer and capture state. If this happens: stop the broken capture with `autopilot stop-capture`, then restart with `autopilot resume-capture <wf_id>` to create a fresh capture session on the same workflow.
+
+---
+
 ## Step 2 — Start Capture
 
 ```bash
@@ -169,17 +185,19 @@ Do NOT blindly proceed after a click — always verify the page state updated be
 
 ### Autocomplete / Typeahead Fields
 
-These fields show a dropdown of suggestions as you type. Standard `type_into_label` + `press_key Enter` often fails because the dropdown needs time to appear and requires a specific selection action.
+These fields show a dropdown of suggestions as you type. **Do NOT use `click_by_text` on autocomplete suggestions** — most sites render them as custom widgets invisible to element queries, so `click_by_text` will fail. Use keyboard selection instead.
 
-Strategy:
-1. `type_into_label label="<field>" text="<partial text>"` — type a few characters
-2. Wait 1-2 seconds for the suggestions dropdown to appear
-3. `get_page_summary` — look for dropdown/listbox elements in the results
-4. `click_by_text "<suggestion text>"` to select the desired option, OR
-5. `press_key ArrowDown` one or more times, then `press_key Enter`
-6. `get_page_summary` — verify the field now shows the selected value
+**Primary strategy (use this first):**
+1. `type_into_label label="<field>" text="<search text>"` — type the search term
+2. Wait 2 seconds for the suggestions dropdown to appear
+3. `press_key ArrowDown` to highlight the first (or desired) suggestion
+4. `press_key Enter` to select it
+5. `get_page_summary` — verify the field now shows the selected value
 
-If `get_page_summary` does not show the dropdown options (common in Shadow DOM or canvas-based UIs), use `take_screenshot` to visually see what appeared, then try `query_elements selector="[role='option'], [role='listbox'] li, .autocomplete-item"` to find selectable items.
+**Fallback (only if keyboard selection doesn't work):**
+1. After typing, run `get_page_summary` to look for dropdown/listbox elements
+2. Try `click_by_text "<suggestion text>"` if visible
+3. If suggestions are not in `get_page_summary` (Shadow DOM, canvas-based UIs), use `take_screenshot` to see the dropdown, then `query_elements selector="[role='option'], [role='listbox'] li, .autocomplete-item"` to find selectable items
 
 ### Date Pickers
 
@@ -423,6 +441,9 @@ Start
   |
   Step 0: Gather website URL, credentials, task description
   |
+  Step 1.5: autopilot verify-extension
+  |   +-- UNSUPPORTED? --> Ask user to reload extension, re-run
+  |
   Step 2: autopilot start-capture "<name>" "<url>"
   |        --> note workflow_session_id + capture_session_id
   |
@@ -435,11 +456,12 @@ Start
   |
   +-- Complex UI? --> Use strategies from "Handling Complex UIs"
   +-- Action failed? --> Follow "Retry and Fallback Strategy"
+  +-- Extension reloaded? --> stop-capture, then resume-capture <wf_id>
   +-- MFA/captcha? --> Ask user to complete, wait, resume
   +-- Dangerous button? --> Check allowed list, ask if unsure
   |
   Step 6: autopilot stop-capture <wf_id> <cs_id>
-  |   +-- No HAR? --> Tell user, suggest /noui-record-workflow
+  |   +-- No HAR? --> Try resume-capture <wf_id>, or /noui-record-workflow
   |
   Step 7: autopilot export <wf_id> <cs_id>
   |   +-- 0 tools? --> Warn user, site may use server-side rendering
@@ -464,6 +486,8 @@ Start
 | `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Click it to open, then `click_by_text` on the desired option |
 | `eval_js` returns CSP error | Use `click_element`, `type_text`, `press_key` instead — these go through the extension content script |
 | Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
+| Extension reloaded mid-capture, HAR lost | Capture is dead. Run `autopilot stop-capture`, then `autopilot resume-capture <wf_id>` to start a fresh capture on the same workflow |
+| `verify-extension` shows UNSUPPORTED commands | Extension is stale. Reload it in `chrome://extensions`, then re-run `verify-extension` |
 
 ---
 
@@ -473,8 +497,11 @@ Start
 |---------|-------------|
 | `.venv/bin/python cli/main.py start` | Start backend |
 | `.venv/bin/python cli/main.py status` | Check backend health |
+| `.venv/bin/python cli/main.py autopilot verify-extension` | Pre-flight check: verify extension supports all browser commands |
 | `.venv/bin/python cli/main.py autopilot start-capture <name> <url>` | Create workflow + capture sessions and start recording |
+| `.venv/bin/python cli/main.py autopilot capture-status <cs_id>` | Show live status of a capture session (status, HAR presence) |
 | `.venv/bin/python cli/main.py autopilot stop-capture <wf_id> <cs_id>` | Stop capture, complete workflow, wait for HAR |
+| `.venv/bin/python cli/main.py autopilot resume-capture <wf_id>` | Create new capture session on existing workflow (after broken capture) |
 | `.venv/bin/python cli/main.py autopilot export <wf_id> <cs_id>` | Validate HAR and export MCP server |
 | `.venv/bin/python cli/main.py autopilot browser <cmd> [args]` | Execute browser command |
 | `.venv/bin/python cli/main.py autopilot list` | List autopilot runs |

@@ -1374,6 +1374,268 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_autopilot_verify_extension(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """Pre-flight check: verify the Chrome extension supports all expected browser commands."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    # Commands to test — a representative set covering original + agent-friendly commands
+    test_commands = [
+        ("get_page_info", {}),
+        ("get_page_summary", {}),
+        ("press_key", {"key": "Shift"}),  # harmless no-op key
+        ("query_elements", {"selector": "body"}),
+    ]
+
+    print(_bold("Verifying extension commands …"))
+    print()
+    all_ok = True
+    for cmd_type, params in test_commands:
+        print(f"  {cmd_type:<25}", end="", flush=True)
+        try:
+            result = _http(
+                "POST",
+                "/browser-commands/execute",
+                {"command_type": cmd_type, "params": params},
+                timeout=10,
+            )
+            assert isinstance(result, dict)
+            if result.get("error"):
+                # Command reached extension but returned an error — still means the
+                # command type is recognised, which is what we care about.
+                if "Unknown command type" in str(result["error"]):
+                    print(_red("UNSUPPORTED"))
+                    all_ok = False
+                else:
+                    print(_green("ok"))
+            elif result.get("success") is False and "Unknown command type" in str(
+                result.get("error", "")
+            ):
+                print(_red("UNSUPPORTED"))
+                all_ok = False
+            else:
+                print(_green("ok"))
+        except Exception as exc:
+            err = str(exc)
+            if "Unknown command type" in err:
+                print(_red("UNSUPPORTED"))
+            else:
+                print(_red(f"FAILED ({err[:60]})"))
+            all_ok = False
+
+    print()
+    if all_ok:
+        print(_green("All commands supported.") + " Extension is ready for autopilot.")
+    else:
+        print(
+            _red("Some commands are missing.")
+            + " Reload the extension in chrome://extensions and retry."
+        )
+    return 0 if all_ok else 1
+
+
+def cmd_autopilot_capture_status(args: argparse.Namespace) -> int:
+    """Show live status of a capture session — whether it's recording and if HAR exists."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    cs_id = args.capture_session_id
+
+    try:
+        cs = _http("GET", f"/capture-sessions/{cs_id}")
+        assert isinstance(cs, dict)
+    except (RuntimeError, AssertionError) as exc:
+        print(_red(f"Failed to get capture session: {exc}"))
+        return 1
+
+    status = cs.get("status", "unknown")
+    status_color = {
+        "capturing": _green,
+        "stopped": _yellow,
+        "idle": _cyan,
+        "paused": _yellow,
+    }.get(status, _red)
+
+    print(_bold(f"Capture Session {cs_id}"))
+    print()
+    print(f"  Status          : {status_color(status)}")
+    print(f"  HAR capture     : {'enabled' if cs.get('har_capture') else 'disabled'}")
+    print(f"  Click tracking  : {'enabled' if cs.get('click_tracking') else 'disabled'}")
+    print(f"  URL monitoring  : {'enabled' if cs.get('url_monitoring') else 'disabled'}")
+    print(f"  Started at      : {cs.get('started_at') or 'not started'}")
+    print(f"  Stopped at      : {cs.get('stopped_at') or 'still running'}")
+
+    # Check if HAR file exists
+    has_har = False
+    har_size = 0
+    if cs.get("har_file_path"):
+        print(f"  HAR file        : {_green('present')}")
+        has_har = True
+    else:
+        try:
+            req = urllib.request.Request(
+                f"{BACKEND_URL}/capture-sessions/{cs_id}/har",
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                har_size = len(resp.read())
+                has_har = har_size > 0
+        except Exception:
+            pass
+        if has_har:
+            print(f"  HAR file        : {_green(f'present ({har_size:,} bytes)')}")
+        else:
+            print(f"  HAR file        : {_yellow('not found')}")
+
+    return 0
+
+
+def cmd_autopilot_resume_capture(args: argparse.Namespace) -> int:
+    """Create a new capture session on an existing workflow, restarting HAR recording."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    wf_id = args.workflow_session_id
+
+    # Get workflow session to find process_id and project_id
+    try:
+        wf = _http("GET", f"/workflow-sessions/{wf_id}")
+        assert isinstance(wf, dict)
+    except (RuntimeError, AssertionError) as exc:
+        print(_red(f"Failed to get workflow session: {exc}"))
+        return 1
+
+    process_id = wf.get("process_id")
+    project_id = wf.get("project_id")
+    if not process_id or not project_id:
+        print(_red("Workflow session missing process_id or project_id"))
+        return 1
+
+    wf_status = wf.get("status", "")
+    print(f"Workflow session: {_cyan(wf_id)} (status: {wf_status})")
+
+    # Restart workflow if it was completed
+    if wf_status == "completed":
+        print("Re-opening completed workflow …", end=" ", flush=True)
+        try:
+            _http("POST", f"/workflow-sessions/{wf_id}/start")
+            print(_green("done"))
+        except RuntimeError as exc:
+            print(_yellow(f"skipped ({exc})"))
+
+    # Create new capture session
+    print("Creating new capture session …", end=" ", flush=True)
+    try:
+        cs = _http(
+            "POST",
+            f"/processes/{process_id}/capture-sessions",
+            {
+                "click_tracking": True,
+                "url_monitoring": True,
+                "har_capture": True,
+            },
+        )
+    except RuntimeError as exc:
+        print(_red(f"\nFailed: {exc}"))
+        return 1
+    assert isinstance(cs, dict)
+    cs_id = cs["id"]
+    print(_green("done"))
+
+    # Start capture session (PUT)
+    try:
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/capture-sessions/{cs_id}/start",
+            data=b"{}",
+            method="PUT",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            json.loads(resp.read().decode())
+    except Exception as exc:
+        print(_red(f"Failed to start capture: {exc}"))
+        return 1
+
+    # Start HAR + click tracking via extension
+    har_started = False
+    try:
+        _http(
+            "POST",
+            "/browser-commands/execute",
+            {
+                "command_type": "start_capture_session",
+                "params": {
+                    "projectId": project_id,
+                    "processId": process_id,
+                    "captureSessionId": cs_id,
+                },
+            },
+            timeout=10,
+        )
+        har_started = True
+    except Exception:
+        try:
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "set_capture_state",
+                    "params": {
+                        "projectId": project_id,
+                        "processId": process_id,
+                        "captureSessionId": cs_id,
+                    },
+                },
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {"command_type": "start_har_capture", "params": {"captureSessionId": cs_id}},
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {"command_type": "inject_click_tracker", "params": {}},
+                timeout=10,
+            )
+            _http(
+                "POST",
+                "/browser-commands/execute",
+                {
+                    "command_type": "start_url_monitoring",
+                    "params": {
+                        "projectId": project_id,
+                        "processId": process_id,
+                        "captureSessionId": cs_id,
+                    },
+                },
+                timeout=10,
+            )
+            har_started = True
+        except Exception as exc:
+            print(_yellow(f"  Extension not responding — HAR capture not started: {exc}"))
+
+    print()
+    print(_bold("Capture resumed:"))
+    print(f"  Workflow session  : {_cyan(wf_id)}")
+    print(f"  Capture session   : {_cyan(cs_id)} (new)")
+    print(f"  Project ID        : {project_id}")
+    print(f"  Process ID        : {process_id}")
+    if har_started:
+        print(f"  HAR capture       : {_green('active')}")
+    else:
+        print(f"  HAR capture       : {_yellow('not started (extension not connected)')}")
+    print()
+    print("  When done:")
+    print(f"    {_bold(f'noui autopilot stop-capture {wf_id} {cs_id}')}")
+    return 0
+
+
 def cmd_autopilot_list(args: argparse.Namespace) -> int:  # noqa: ARG001
     """List autopilot recording runs."""
     if not _backend_alive():
@@ -3234,6 +3496,21 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_status = ap_sub.add_parser("status", help="Show status of an autopilot run")
     ap_status.add_argument("run_id", help="Autopilot run ID")
 
+    ap_sub.add_parser(
+        "verify-extension", help="Pre-flight check: verify extension supports all browser commands"
+    )
+
+    ap_capstatus = ap_sub.add_parser(
+        "capture-status", help="Show live status of a capture session"
+    )
+    ap_capstatus.add_argument("capture_session_id", help="Capture session ID")
+
+    ap_resume = ap_sub.add_parser(
+        "resume-capture",
+        help="Create a new capture session on an existing workflow (after broken capture)",
+    )
+    ap_resume.add_argument("workflow_session_id", help="Workflow session ID to resume")
+
     # Capture lifecycle
     ap_start = ap_sub.add_parser(
         "start-capture", help="Create sessions and start HAR + click capture"
@@ -3395,9 +3672,16 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
 def _dispatch_autopilot(args: argparse.Namespace) -> int:
     cmd = getattr(args, "autopilot_command", None)
     if cmd is None:
-        print("Usage: noui autopilot {start-capture,stop-capture,export,browser,list,status}")
+        print(
+            "Usage: noui autopilot"
+            " {verify-extension,start-capture,stop-capture,resume-capture,"
+            "capture-status,export,browser,list,status}"
+        )
         return 1
     dispatch = {
+        "verify-extension": cmd_autopilot_verify_extension,
+        "capture-status": cmd_autopilot_capture_status,
+        "resume-capture": cmd_autopilot_resume_capture,
         "start-capture": cmd_autopilot_start_capture,
         "stop-capture": cmd_autopilot_stop_capture,
         "export": cmd_autopilot_export,
