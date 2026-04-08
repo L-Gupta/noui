@@ -81,7 +81,7 @@ Approve this? (yes / adjust: ...)
 
 ### 3b. Edit on approval
 
-Once approved, make three edits:
+Once approved, make four edits:
 
 1. **`operations/<old_name>.py`** — rewrite the function signature and body:
    - New function name matches the approved tool name
@@ -97,6 +97,14 @@ Once approved, make three edits:
 
 3. **`server.py`** — update the import and tool registration to use the new function name (if the function was renamed)
 
+4. **`API.md`** — refresh the documentation to reflect the change:
+
+```bash
+.venv/bin/python cli/main.py mcp docs <server_id>
+```
+
+This overwrites `API.md` from the current `tools.json`. Run it after every tool edit, not just at the end.
+
 ### 3c. Move to next tool
 
 Repeat Phase 3 for each tool. Do not batch edits.
@@ -105,9 +113,15 @@ Repeat Phase 3 for each tool. Do not batch edits.
 
 ## Phase 4 — Iterate After Testing
 
-After all tools are rewritten:
+After all tools are rewritten, do a final docs refresh:
 
-> "Done. Please restart Claude Code (close and reopen, or run `/reconnect`) to reload the updated tools. Then try invoking the workflow — for example: 'search for flights from Fortaleza to Seattle on June 1'."
+```bash
+.venv/bin/python cli/main.py mcp docs <server_id>
+```
+
+Then tell the user:
+
+> "Done. `API.md` is up to date. Please restart Claude Code (close and reopen, or run `/reconnect`) to reload the updated tools. Then try invoking the workflow — for example: 'search for flights from Fortaleza to Seattle on June 1'."
 
 When the user reports results, fix any issues:
 

@@ -115,8 +115,9 @@ The CLI compiles the captured HAR and click events into a FastMCP server and wri
 ```
 mcp_servers/<app_slug>/<server_id>/
 ├── server.py            # FastMCP entrypoint
-├── tools.json           # Tool inventory
+├── tools.json           # Tool inventory (source of truth for tool shapes)
 ├── manifest.json        # Server manifest (auth metadata, runtime config)
+├── API.md               # Human-readable API reference (auto-generated)
 ├── noui_runtime/
 │   └── auth.py          # Runtime auth adapter (fetches live creds from Tabby)
 └── operations/
@@ -192,3 +193,5 @@ Start
 | Path A: server fails with auth errors at runtime | Confirm `tabby_profile_id` is correct and profile is HEALTHY via `login validate` |
 | `mcp_servers/` empty after export | Check `.noui-backend.log` in the repo root for compiler errors |
 | Tools have unreadable raw API param names (`f_sid`, `bl`, `reqid`) | Run `/noui-generalize` |
+| `API.md` missing from the generated folder | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to generate it |
+| `API.md` is stale after editing `tools.json` | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to refresh |

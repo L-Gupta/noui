@@ -21,6 +21,8 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 - **ALWAYS** restart Claude Code after editing `~/.claude.json` — the config is read at startup
 - You do **not** need to run `mcp start` separately when using the `~/.claude.json` stdio config — Claude Code launches the process automatically
 
+Every generated server folder includes an **`API.md`** file — a human-readable API reference for all tools. Read it to understand a server's tools without inspecting `tools.json` or operation files. Refresh it with `mcp docs <server_id>` after any edit to `tools.json`.
+
 ---
 
 ## Step 1 — List Available Servers
@@ -144,6 +146,8 @@ Start
 | `.venv/bin/python cli/main.py mcp start <server_id>` | Start a server process in the background |
 | `.venv/bin/python cli/main.py mcp stop <server_id>` | Stop a running server process |
 | `.venv/bin/python cli/main.py mcp status <server_id>` | Show running state, tool count, and manifest path |
+| `.venv/bin/python cli/main.py mcp docs <server_id>` | Regenerate `API.md` from current `tools.json` |
+| `.venv/bin/python cli/main.py mcp docs <server_id> --check` | Exit non-zero if `API.md` is stale (for CI / agent validation) |
 
 ---
 
