@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+import backend.autopilot.models  # noqa: F401
 import backend.elicitation.models  # noqa: F401
 
 # ── Register all ORM models so their tables are created on startup ────────────
@@ -42,6 +43,7 @@ from backend.elicitation.routers.timeline import router as timeline_router
 from backend.elicitation.routers.url_events import router as elicitation_url_events_router
 
 # ── NoUI-specific routers ─────────────────────────────────────────────────────
+from backend.autopilot.router import router as autopilot_router
 from backend.login.router import router as login_router
 
 # ── Shared routers (HAR upload only — clicks/url_events handled by elicitation) ──
@@ -114,6 +116,7 @@ app.include_router(elicitation_url_events_router)
 # ── NoUI domain routers ───────────────────────────────────────────────────────
 app.include_router(login_router, prefix="/login-sessions")
 app.include_router(workflow_router, prefix="/workflow-sessions")
+app.include_router(autopilot_router)
 
 # ── Elicitation (ABCD) routers ────────────────────────────────────────────────
 app.include_router(projects_router)

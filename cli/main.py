@@ -20,6 +20,13 @@ Subcommands:
     workflow captures                  - List capture sessions recorded via the extension
     workflow export-mcp <session_id>   - Compile workflow to FastMCP server
 
+    autopilot start-capture <name> <url> - Create sessions and start HAR/click capture
+    autopilot stop-capture <wf> <cs>   - Stop capture, complete workflow, wait for HAR
+    autopilot export <wf> <cs>         - Validate HAR and export MCP server
+    autopilot browser <cmd> [args]     - Execute a browser command via the extension
+    autopilot list                     - List autopilot recording runs
+    autopilot status <run_id>          - Show status of an autopilot run
+
     mcp list                           - List generated MCP servers
     mcp status <server_id>             - Show status of a generated MCP server
     mcp start <server_id>              - Start a generated MCP server
@@ -1016,6 +1023,358 @@ def _run_mcp_verify(server_id: str) -> int:
     else:
         print(_red(f"  Auth verification UNSUPPORTED: {result.message}"))
         return 1
+
+
+# ---------------------------------------------------------------------------
+# autopilot subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
+    """Create workflow + capture sessions and start HAR/click recording."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    name = args.name
+    url = args.url
+
+    print(f"Creating workflow session '{name}' …", end=" ", flush=True)
+    try:
+        wf = _http("POST", "/workflow-sessions", {"name": name, "start_url": url, "description": name})
+    except RuntimeError as exc:
+        print(_red(f"\nFailed: {exc}"))
+        return 1
+    wf_id = wf["id"]
+    process_id = wf["process_id"]
+    project_id = wf["project_id"]
+    print(_green("done"))
+
+    # Start workflow
+    try:
+        _http("POST", f"/workflow-sessions/{wf_id}/start")
+    except RuntimeError as exc:
+        print(_red(f"Failed to start workflow: {exc}"))
+        return 1
+
+    # Create capture session
+    try:
+        cs = _http("POST", f"/processes/{process_id}/capture-sessions", {
+            "click_tracking": True,
+            "url_monitoring": True,
+            "har_capture": True,
+        })
+    except RuntimeError as exc:
+        print(_red(f"Failed to create capture session: {exc}"))
+        return 1
+    cs_id = cs["id"]
+
+    # Start capture session (PUT)
+    try:
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/capture-sessions/{cs_id}/start",
+            data=b"{}",
+            method="PUT",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            json.loads(resp.read().decode())
+    except Exception as exc:
+        print(_red(f"Failed to start capture: {exc}"))
+        return 1
+
+    # Start HAR + click tracking via extension (best effort)
+    har_started = False
+    try:
+        result = _http("POST", "/browser-commands/execute", {
+            "command_type": "start_capture_session",
+            "params": {
+                "projectId": project_id,
+                "processId": process_id,
+                "captureSessionId": cs_id,
+            },
+        }, timeout=10)
+        har_started = True
+    except Exception:
+        # Fallback: try individual commands
+        try:
+            _http("POST", "/browser-commands/execute", {
+                "command_type": "set_capture_state",
+                "params": {"projectId": project_id, "processId": process_id, "captureSessionId": cs_id},
+            }, timeout=10)
+            _http("POST", "/browser-commands/execute", {
+                "command_type": "start_har_capture",
+                "params": {"captureSessionId": cs_id},
+            }, timeout=10)
+            _http("POST", "/browser-commands/execute", {
+                "command_type": "inject_click_tracker",
+                "params": {},
+            }, timeout=10)
+            _http("POST", "/browser-commands/execute", {
+                "command_type": "start_url_monitoring",
+                "params": {"projectId": project_id, "processId": process_id, "captureSessionId": cs_id},
+            }, timeout=10)
+            har_started = True
+        except Exception as exc:
+            print(_yellow(f"  Extension not responding — HAR capture not started: {exc}"))
+
+    print()
+    print(_bold("Capture started:"))
+    print(f"  Workflow session  : {_cyan(wf_id)}")
+    print(f"  Capture session   : {_cyan(cs_id)}")
+    print(f"  Project ID        : {project_id}")
+    print(f"  Process ID        : {process_id}")
+    if har_started:
+        print(f"  HAR capture       : {_green('active')}")
+    else:
+        print(f"  HAR capture       : {_yellow('not started (extension not connected)')}")
+    print()
+    print("  Now drive the browser with:")
+    print(f"    {_bold(f'noui autopilot browser navigate url={url}')}")
+    print(f"    {_bold('noui autopilot browser query_elements selector=...')}")
+    print(f"    {_bold('noui autopilot browser type_text selector=... text=...')}")
+    print(f"    {_bold('noui autopilot browser click_element selector=...')}")
+    print()
+    print("  When done:")
+    print(f"    {_bold(f'noui autopilot stop-capture {wf_id} {cs_id}')}")
+    return 0
+
+
+def cmd_autopilot_stop_capture(args: argparse.Namespace) -> int:
+    """Stop capture, complete workflow, wait for HAR upload."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    wf_id = args.workflow_session_id
+    cs_id = args.capture_session_id
+
+    # Stop extension capture (HAR upload happens here)
+    print("Stopping extension capture …", end=" ", flush=True)
+    try:
+        _http("POST", "/browser-commands/execute", {
+            "command_type": "stop_capture_session",
+            "params": {"captureSessionId": cs_id},
+        }, timeout=35)
+        print(_green("done"))
+    except Exception:
+        print(_yellow("skipped (extension not responding)"))
+
+    # Stop capture session in DB (PUT)
+    print("Stopping capture session …", end=" ", flush=True)
+    try:
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/capture-sessions/{cs_id}/stop",
+            data=b"{}",
+            method="PUT",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            json.loads(resp.read().decode())
+        print(_green("done"))
+    except Exception as exc:
+        print(_yellow(f"skipped ({exc})"))
+
+    # Complete workflow session
+    print("Completing workflow session …", end=" ", flush=True)
+    try:
+        _http("POST", f"/workflow-sessions/{wf_id}/complete")
+        print(_green("done"))
+    except RuntimeError as exc:
+        print(_yellow(f"skipped ({exc})"))
+
+    # Wait for HAR upload
+    print("Waiting for HAR upload …", end=" ", flush=True)
+    time.sleep(3)
+
+    # Check if HAR exists
+    has_har = False
+    try:
+        req = urllib.request.Request(
+            f"{BACKEND_URL}/capture-sessions/{cs_id}/har",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            har_size = len(resp.read())
+            has_har = har_size > 0
+    except Exception:
+        pass
+
+    if has_har:
+        print(_green(f"done ({har_size:,} bytes)"))
+    else:
+        print(_yellow("no HAR file found"))
+
+    print()
+    if has_har:
+        print(_green("Capture complete.") + " Next:")
+        print(f"    {_bold(f'noui autopilot export {wf_id} {cs_id}')}")
+    else:
+        print(_yellow("No HAR captured.") + " The extension may not have been recording.")
+        print("  You can still try to export (may fail if no API calls were captured):")
+        print(f"    {_bold(f'noui autopilot export {wf_id} {cs_id}')}")
+    return 0
+
+
+def cmd_autopilot_export(args: argparse.Namespace) -> int:
+    """Validate HAR and export MCP server."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    wf_id = args.workflow_session_id
+    cs_id = args.capture_session_id
+    profile_slug = getattr(args, "profile_slug", "")
+
+    params = [f"capture_session_id={cs_id}"]
+    if profile_slug:
+        params.append(f"profile_slug={profile_slug}")
+    path = f"/workflow-sessions/{wf_id}/export-mcp?" + "&".join(params)
+
+    print(f"Exporting workflow {_cyan(wf_id)} to MCP …", end=" ", flush=True)
+    try:
+        result = _http("POST", path)
+        assert isinstance(result, dict)
+        print(_green("done"))
+    except (RuntimeError, AssertionError) as exc:
+        print()
+        print(_red(f"Export failed: {exc}"))
+        return 1
+
+    server_id = result.get("server_id", "?")
+    tool_count = result.get("tool_count", len(result.get("tools", [])))
+
+    print()
+    print(_bold("MCP server generated:"))
+    print(f"  Server ID  : {_cyan(server_id)}")
+    print(f"  Tools      : {tool_count}")
+    auth_info = result.get("auth", {})
+    if auth_info.get("requires_auth"):
+        strategy = auth_info.get("strategy") or "tabby_credentials"
+        slug = auth_info.get("profile_slug") or "?"
+        print(f"  Auth       : {strategy} (profile: {slug})")
+    else:
+        print("  Auth       : none (public API)")
+    print()
+    print(f"  Install: {_bold(f'noui mcp install {server_id} claude-code')}")
+    return 0
+
+
+def cmd_autopilot_browser(args: argparse.Namespace) -> int:
+    """Execute a browser command via the extension."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    cmd_type = args.browser_command
+    raw_args = args.browser_args
+
+    # Build params dict from positional args
+    # Supports: key=value pairs or a single positional value for common commands
+    params: dict = {}
+    if raw_args:
+        for arg in raw_args:
+            if "=" in arg:
+                key, value = arg.split("=", 1)
+                params[key] = value
+            else:
+                # For convenience: single arg maps to the primary param of common commands
+                _primary_param = {
+                    "navigate": "url",
+                    "click_element": "selector",
+                    "click_by_text": "text",
+                    "type_text": "selector",
+                    "type_into_label": "label",
+                    "wait_for_selector": "selector",
+                    "wait_for_url": "url_substring",
+                    "press_key": "key",
+                    "select_option": "selector",
+                }
+                primary = _primary_param.get(cmd_type)
+                if primary and primary not in params:
+                    params[primary] = arg
+                else:
+                    # For type_into_label: first arg=label, second arg=text
+                    if cmd_type == "type_into_label" and "label" in params and "text" not in params:
+                        params["text"] = arg
+                    elif cmd_type == "type_text" and "selector" in params and "text" not in params:
+                        params["text"] = arg
+                    elif cmd_type == "select_option" and "selector" in params and "value" not in params:
+                        params["value"] = arg
+
+    try:
+        result = _http("POST", "/browser-commands/execute", {
+            "command_type": cmd_type,
+            "params": params,
+        }, timeout=35)
+        print(json.dumps(result, indent=2))
+        return 0
+    except RuntimeError as exc:
+        print(_red(f"Browser command failed: {exc}"))
+        return 1
+
+
+def cmd_autopilot_list(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """List autopilot recording runs."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    try:
+        runs = _http("GET", "/autopilot-recordings")
+        assert isinstance(runs, list)
+    except (RuntimeError, AssertionError) as exc:
+        print(_red(f"Failed to list runs: {exc}"))
+        return 1
+
+    if not runs:
+        print("No autopilot recording runs found.")
+        return 0
+
+    print(f"{'ID':<38} {'Status':<20} {'Website':<40} {'Tools':<6} {'Created'}")
+    print("-" * 120)
+    for r in runs:
+        run_id = r.get("id", "?")[:36]
+        status = r.get("status", "?")
+        website = r.get("website_url", "?")[:38]
+        tools = str(r.get("tools_count", 0))
+        created = r.get("created_at", "?")[:19]
+        print(f"{run_id:<38} {status:<20} {website:<40} {tools:<6} {created}")
+
+    return 0
+
+
+def cmd_autopilot_status(args: argparse.Namespace) -> int:
+    """Show status of an autopilot run."""
+    if not _backend_alive():
+        print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
+        return 1
+
+    run_id = args.run_id
+    try:
+        result = _http("GET", f"/autopilot-recordings/{run_id}")
+        assert isinstance(result, dict)
+    except (RuntimeError, AssertionError) as exc:
+        print(_red(f"Failed to get run: {exc}"))
+        return 1
+
+    print(_bold(f"Autopilot Run {run_id}"))
+    print()
+    for key in [
+        "status", "website_url", "login_url", "task_description",
+        "success_condition", "stop_condition", "tabby_profile_id",
+        "workflow_session_id", "capture_session_id", "server_id",
+        "mcp_output_path", "tools_count", "failure_reason",
+        "created_at", "updated_at", "completed_at",
+    ]:
+        val = result.get(key, "")
+        if val:
+            label = key.replace("_", " ").title()
+            print(f"  {label:<25}: {val}")
+
+    return 0
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -2797,6 +3156,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     mcp_diagnose_p.add_argument("server_id", help="MCP server ID")
 
+    # --- autopilot ---
+    ap_parser = sub.add_parser("autopilot", help="Autopilot recording commands")
+    ap_sub = ap_parser.add_subparsers(dest="autopilot_command")
+
+    ap_sub.add_parser("list", help="List autopilot recording runs")
+
+    ap_status = ap_sub.add_parser("status", help="Show status of an autopilot run")
+    ap_status.add_argument("run_id", help="Autopilot run ID")
+
+    # Capture lifecycle
+    ap_start = ap_sub.add_parser("start-capture", help="Create sessions and start HAR + click capture")
+    ap_start.add_argument("name", help="Workflow name")
+    ap_start.add_argument("url", help="Website start URL")
+
+    ap_stop = ap_sub.add_parser("stop-capture", help="Stop capture, complete workflow, wait for HAR upload")
+    ap_stop.add_argument("workflow_session_id", help="Workflow session ID (from start-capture)")
+    ap_stop.add_argument("capture_session_id", help="Capture session ID (from start-capture)")
+
+    ap_export = ap_sub.add_parser("export", help="Validate HAR and export MCP server")
+    ap_export.add_argument("workflow_session_id", help="Workflow session ID")
+    ap_export.add_argument("capture_session_id", help="Capture session ID")
+    ap_export.add_argument("--profile-slug", default="", help="Tabby profile slug for auth")
+
+    # Browser command passthrough — lets Claude Code drive the browser from the CLI
+    ap_browser = ap_sub.add_parser("browser", help="Execute a browser command via the extension")
+    ap_browser.add_argument("browser_command", help="Command type (e.g. get_page_info, click_element, navigate)")
+    ap_browser.add_argument("browser_args", nargs="*", default=[], help="Command arguments as key=value pairs or positional values")
+
     # --- tabby ---
     tabby_parser = sub.add_parser("tabby", help="Tabby credential service lifecycle commands")
     tabby_sub = tabby_parser.add_subparsers(dest="tabby_command")
@@ -2925,6 +3312,26 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
     return fn(args)
 
 
+def _dispatch_autopilot(args: argparse.Namespace) -> int:
+    cmd = getattr(args, "autopilot_command", None)
+    if cmd is None:
+        print("Usage: noui autopilot {start-capture,stop-capture,export,browser,list,status}")
+        return 1
+    dispatch = {
+        "start-capture": cmd_autopilot_start_capture,
+        "stop-capture": cmd_autopilot_stop_capture,
+        "export": cmd_autopilot_export,
+        "list": cmd_autopilot_list,
+        "status": cmd_autopilot_status,
+        "browser": cmd_autopilot_browser,
+    }
+    fn = dispatch.get(cmd)
+    if fn is None:
+        print(_red(f"Unknown autopilot subcommand: {cmd}"))
+        return 1
+    return fn(args)
+
+
 def _dispatch_tabby_session(args: argparse.Namespace) -> int:
     action = getattr(args, "session_action", None)
     if action is None:
@@ -2993,6 +3400,7 @@ def main() -> None:
         "login": _dispatch_login,
         "workflow": _dispatch_workflow,
         "mcp": _dispatch_mcp,
+        "autopilot": _dispatch_autopilot,
         "tabby": _dispatch_tabby,
     }
 

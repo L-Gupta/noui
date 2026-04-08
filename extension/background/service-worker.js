@@ -528,6 +528,119 @@ const handlers = {
     return { status: "stopped" };
   },
 
+  // ── Autopilot composite commands ──────────────────────────────────────
+
+  START_CAPTURE_SESSION: async ({ projectId, processId, captureSessionId, tabId: requestedTabId }) => {
+    const tabId = requestedTabId || (await getActiveTabId());
+    if (!tabId) throw new Error("No active tab found for capture");
+
+    // 1. Set capture state
+    captureState = { projectId, processId, captureSessionId };
+    _persistCaptureState();
+
+    // 2. Inject click tracker
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content/click-tracker.js"] });
+
+    // 3. Start URL monitoring
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    urlMonitoringState = { projectId, processId, captureSessionId, lastUrl: tab?.url || "" };
+    chrome.storage.session.set({ urlMonitoringState });
+
+    // 4. Start HAR capture
+    harState = { tabId, requestMap: {}, captureSessionId };
+    _persistHarMeta();
+
+    console.log("[Autopilot] Capture session started:", captureSessionId);
+    return { status: "started", tabId, captureSessionId };
+  },
+
+  STOP_CAPTURE_SESSION: async ({ captureSessionId }) => {
+    // 1. Stop HAR capture (must be first — uploads HAR on stop)
+    let harResult = { status: "no_capture", entries: 0 };
+    if (harState || captureSessionId) {
+      try {
+        harResult = await handlers.STOP_HAR_CAPTURE({ captureSessionId });
+      } catch (e) {
+        console.warn("[Autopilot] HAR stop failed:", e.message);
+      }
+    }
+
+    // 2. Remove click tracker
+    const tabId = await getActiveTabId();
+    if (tabId) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => { if (window.__adoptClickTracker) window.__adoptClickTracker(); },
+        });
+      } catch (e) {
+        console.warn("[Autopilot] Click tracker removal failed:", e.message);
+      }
+    }
+
+    // 3. Clear capture state
+    captureState = null;
+    _persistCaptureState();
+
+    // 4. Stop URL monitoring
+    urlMonitoringState = null;
+    chrome.storage.session.remove(["urlMonitoringState"]);
+
+    console.log("[Autopilot] Capture session stopped:", captureSessionId);
+    return { status: "stopped", har: harResult };
+  },
+
+  START_LOGIN_RECORDING_SESSION: async ({ captureSessionId, projectId, processId, tabId: requestedTabId }) => {
+    const tabId = requestedTabId || (await getActiveTabId());
+    if (!tabId) throw new Error("No active tab found for login recording");
+
+    // 1. Set login recording state
+    loginRecordingState = { captureSessionId, projectId, processId };
+    chrome.storage.session.set({ loginRecordingState });
+
+    // 2. Inject login recorder (NOT click tracker — login recorder handles sensitive fields)
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content/login-recorder.js"] });
+
+    // 3. Start HAR capture
+    harState = { tabId, requestMap: {}, captureSessionId };
+    _persistHarMeta();
+
+    console.log("[Autopilot] Login recording session started:", captureSessionId);
+    return { status: "started", tabId, captureSessionId };
+  },
+
+  STOP_LOGIN_RECORDING_SESSION: async ({ captureSessionId }) => {
+    // 1. Stop HAR capture (must be first)
+    let harResult = { status: "no_capture", entries: 0 };
+    if (harState || captureSessionId) {
+      try {
+        harResult = await handlers.STOP_HAR_CAPTURE({ captureSessionId });
+      } catch (e) {
+        console.warn("[Autopilot] Login HAR stop failed:", e.message);
+      }
+    }
+
+    // 2. Remove login recorder
+    const tabId = await getActiveTabId();
+    if (tabId) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => { if (window.__adoptLoginRecorder) window.__adoptLoginRecorder(); },
+        });
+      } catch (e) {
+        console.warn("[Autopilot] Login recorder removal failed:", e.message);
+      }
+    }
+
+    // 3. Clear login recording state
+    loginRecordingState = null;
+    chrome.storage.session.remove(["loginRecordingState"]);
+
+    console.log("[Autopilot] Login recording session stopped:", captureSessionId);
+    return { status: "stopped", har: harResult };
+  },
+
   CAPTURE_REGION_SCREENSHOT: async ({ projectId, processId }) => {
     const tabId = await getActiveTabId();
     if (!tabId) throw new Error("No active tab found");
@@ -857,6 +970,42 @@ async function _executeCommand(cmd) {
 }
 
 const _commandHandlers = {
+  // ── Autopilot capture lifecycle (delegates to message handlers) ────────
+
+  start_har_capture: async ({ captureSessionId }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+    return handlers.START_HAR_CAPTURE({ captureSessionId, tabId });
+  },
+
+  stop_har_capture: async ({ captureSessionId }) => {
+    return handlers.STOP_HAR_CAPTURE({ captureSessionId });
+  },
+
+  start_capture_session: async ({ projectId, processId, captureSessionId }) => {
+    return handlers.START_CAPTURE_SESSION({ projectId, processId, captureSessionId });
+  },
+
+  stop_capture_session: async ({ captureSessionId }) => {
+    return handlers.STOP_CAPTURE_SESSION({ captureSessionId });
+  },
+
+  inject_click_tracker: async () => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+    return handlers.INJECT_CLICK_TRACKER({ tabId });
+  },
+
+  set_capture_state: async ({ projectId, processId, captureSessionId }) => {
+    return handlers.SET_CAPTURE_STATE({ projectId, processId, captureSessionId });
+  },
+
+  start_url_monitoring: async ({ projectId, processId, captureSessionId }) => {
+    return handlers.START_URL_MONITORING({ projectId, processId, captureSessionId });
+  },
+
+  // ── Original commands ─────────────────────────────────────────────────
+
   get_page_info: async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) throw new Error("No active tab found");
@@ -1004,6 +1153,231 @@ const _commandHandlers = {
         }
       },
       args: [code],
+    });
+
+    return result.result;
+  },
+
+  // ── Agent-friendly commands ──────────────────────────────────────────
+
+  wait_for_selector: async ({ selector, timeout }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+    const ms = timeout || 10000;
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (sel, timeoutMs) => {
+        return new Promise((resolve) => {
+          if (document.querySelector(sel)) {
+            resolve({ found: true, waited: 0 });
+            return;
+          }
+          const start = Date.now();
+          const observer = new MutationObserver(() => {
+            if (document.querySelector(sel)) {
+              observer.disconnect();
+              resolve({ found: true, waited: Date.now() - start });
+            }
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+          setTimeout(() => {
+            observer.disconnect();
+            resolve({ found: !!document.querySelector(sel), waited: Date.now() - start, timeout: true });
+          }, timeoutMs);
+        });
+      },
+      args: [selector, ms],
+    });
+
+    return result.result;
+  },
+
+  wait_for_url: async ({ url_substring, timeout }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+    const ms = timeout || 10000;
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (sub, timeoutMs) => {
+        return new Promise((resolve) => {
+          if (window.location.href.includes(sub)) {
+            resolve({ matched: true, url: window.location.href, waited: 0 });
+            return;
+          }
+          const start = Date.now();
+          const interval = setInterval(() => {
+            if (window.location.href.includes(sub)) {
+              clearInterval(interval);
+              resolve({ matched: true, url: window.location.href, waited: Date.now() - start });
+            } else if (Date.now() - start > timeoutMs) {
+              clearInterval(interval);
+              resolve({ matched: false, url: window.location.href, waited: Date.now() - start, timeout: true });
+            }
+          }, 200);
+        });
+      },
+      args: [url_substring, ms],
+    });
+
+    return result.result;
+  },
+
+  get_page_summary: async () => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"]';
+        const els = document.querySelectorAll(selectors);
+        const out = [];
+        const limit = Math.min(els.length, 60);
+        for (let i = 0; i < limit; i++) {
+          const el = els[i];
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue; // skip hidden
+          const entry = {
+            index: i,
+            tagName: el.tagName.toLowerCase(),
+            type: el.type || null,
+            id: el.id || null,
+            name: el.name || null,
+            text: (el.textContent || el.value || "").trim().slice(0, 100),
+            placeholder: el.placeholder || null,
+            ariaLabel: el.getAttribute("aria-label") || null,
+            href: el.href || null,
+            disabled: el.disabled || false,
+          };
+          // Build a reasonable selector
+          if (el.id) {
+            entry.selector = `#${el.id}`;
+          } else if (el.name) {
+            entry.selector = `${el.tagName.toLowerCase()}[name="${el.name}"]`;
+          } else {
+            let s = el.tagName.toLowerCase();
+            if (el.className && typeof el.className === "string") {
+              s += "." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
+            }
+            entry.selector = s;
+          }
+          out.push(entry);
+        }
+        return { total: els.length, returned: out.length, elements: out };
+      },
+    });
+
+    return {
+      url: tab?.url || "",
+      title: tab?.title || "",
+      ...(result.result || {}),
+    };
+  },
+
+  click_by_text: async ({ text }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (searchText) => {
+        const lower = searchText.toLowerCase();
+        const all = document.querySelectorAll('a, button, [role="button"], input[type="submit"], input[type="button"]');
+        for (const el of all) {
+          const elText = (el.textContent || el.value || "").trim().toLowerCase();
+          if (elText.includes(lower) && el.offsetParent !== null) {
+            el.click();
+            return { clicked: true, tagName: el.tagName.toLowerCase(), text: (el.textContent || el.value || "").trim().slice(0, 100) };
+          }
+        }
+        return { clicked: false, error: "No visible element found with text: " + searchText };
+      },
+      args: [text],
+    });
+
+    return result.result;
+  },
+
+  type_into_label: async ({ label, text }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (searchLabel, inputText) => {
+        const lower = searchLabel.toLowerCase();
+        const inputs = document.querySelectorAll("input, textarea, select");
+        for (const el of inputs) {
+          const ph = (el.placeholder || "").toLowerCase();
+          const aria = (el.getAttribute("aria-label") || "").toLowerCase();
+          const name = (el.name || "").toLowerCase();
+          const id = el.id || "";
+          let labelText = "";
+          if (id) {
+            const lbl = document.querySelector(`label[for="${id}"]`);
+            if (lbl) labelText = (lbl.textContent || "").trim().toLowerCase();
+          }
+          if (ph.includes(lower) || aria.includes(lower) || name.includes(lower) || labelText.includes(lower)) {
+            el.focus();
+            el.value = inputText;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return { typed: true, tagName: el.tagName.toLowerCase(), name: el.name, id: el.id };
+          }
+        }
+        return { typed: false, error: "No input found matching label: " + searchLabel };
+      },
+      args: [label, text],
+    });
+
+    return result.result;
+  },
+
+  select_option: async ({ selector, value }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (sel, val) => {
+        const selectEl = document.querySelector(sel);
+        if (!selectEl) return { selected: false, error: "No select found for: " + sel };
+        const lower = val.toLowerCase();
+        for (const opt of selectEl.options) {
+          if (opt.value === val || opt.text.toLowerCase().includes(lower)) {
+            selectEl.value = opt.value;
+            selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+            return { selected: true, value: opt.value, text: opt.text };
+          }
+        }
+        return { selected: false, error: "Option not found: " + val };
+      },
+      args: [selector, value],
+    });
+
+    return result.result;
+  },
+
+  press_key: async ({ key, selector }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (keyName, sel) => {
+        const target = sel ? document.querySelector(sel) : document.activeElement;
+        if (!target) return { pressed: false, error: "No target element" };
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true }));
+        target.dispatchEvent(new KeyboardEvent("keyup", { key: keyName, bubbles: true }));
+        if (keyName === "Enter") {
+          target.dispatchEvent(new KeyboardEvent("keypress", { key: keyName, bubbles: true }));
+        }
+        return { pressed: true, key: keyName, tagName: target.tagName.toLowerCase() };
+      },
+      args: [key, selector || ""],
     });
 
     return result.result;
