@@ -18,7 +18,8 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 - **YOU are the browser agent.** Do not call any external AI API. You read page state, decide what to do, and execute browser commands yourself.
 - **ALWAYS** start the backend before doing anything else.
 - **NEVER** type raw passwords into chat output or logs. When you type credentials into the browser, use the browser command — the value goes to the extension, not to the conversation.
-- **ALWAYS** call `get_page_summary` before clicking or typing to understand what elements are available.
+- **ALWAYS** call `get_page_summary` (or `cdp_get_accessibility_tree` for complex SPAs) before clicking or typing to understand what elements are available.
+- **PREFER CDP commands** (`cdp_click`, `cdp_type`, `cdp_press_key`) over standard commands on React/Vue/Angular sites, custom components, and any page where standard commands fail.
 - **NEVER** click Send, Submit, Pay, Delete, Publish, or Invite buttons unless the user explicitly allowed that side effect.
 - **ALWAYS** stop capture before exporting MCP.
 - **NEVER** skip capture validation — if no API calls were recorded, do not export an empty MCP.
@@ -335,8 +336,8 @@ They proxy to `POST http://localhost:8002/browser-commands/execute` with body `{
 
 #### `get_page_summary`
 **Params:** none
-**Response:** `{ url: string, title: string, total: number, returned: number (max 60), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, selector }] }`
-Returns all visible interactive elements (`a, button, input, select, textarea, [role="button|link|tab|menuitem"]`). Hidden elements (0x0 rect) are filtered out. Use this to understand what is on the page before acting.
+**Response:** `{ url: string, title: string, total: number, inViewport: number, returned: number (max 200), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, inViewport, selector }] }`
+Returns visible interactive elements from all frames (main page + iframes), piercing shadow DOM. Elements in the viewport are listed first. Up to 200 elements returned. Hidden elements (`display:none`, `visibility:hidden`, 0x0 rect) are filtered out. For complex pages where this still misses elements, use `cdp_get_accessibility_tree`.
 
 ---
 
@@ -365,8 +366,8 @@ Returns all visible interactive elements (`a, button, input, select, textarea, [
 #### `type_text`
 **Params:** `selector` (required), `text` (required), `clearFirst` (optional, bool, default `true`)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser type_text selector=#email text=user@example.com`
-**Behavior:** Focuses the element, optionally clears it, sets `.value`, dispatches `input` + `change` events.
-**Response:** `{ typed: true, tagName: string, id: string|null, finalValue: string (max 200) }` or `{ typed: false, error: string }`
+**Behavior:** Focuses the element, optionally clears it, sets value via React-compatible native setter, dispatches `input` + `change` events. Supports `contenteditable` elements. For autocomplete fields or complex inputs, prefer `cdp_type` instead.
+**Response:** `{ typed: true, tagName: string, id: string|null, finalValue: string (max 200), method: string }` or `{ typed: false, error: string }`
 
 ---
 
@@ -431,6 +432,75 @@ Uploads the screenshot to the backend. Use sparingly.
 
 ---
 
+### CDP Commands (OS-Level Input)
+
+These commands use Chrome DevTools Protocol to dispatch **OS-level input events** — the same mechanism Playwright/Puppeteer use. They work with React, Vue, Angular, custom date pickers, autocomplete fields, and any framework. **Prefer these over the standard commands for all interactions on modern web apps.**
+
+A "debugging" banner will appear in Chrome when CDP commands are first used — this is expected.
+
+---
+
+#### `cdp_click`
+**Params:** `selector` (CSS selector) OR `x`/`y` (coordinates). Provide one or both.
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_click selector=#search-btn`
+**CLI (coordinates):** `.venv/bin/python cli/main.py autopilot browser cdp_click x=400 y=300`
+**Behavior:** Scrolls element into view, dispatches real mousePressed/mouseReleased events at element center. Works with React onClick, Vue @click, custom dropdown triggers, date picker buttons, etc.
+**Response:** `{ clicked: true, x: number, y: number, selector: string|null }` or `{ clicked: false, error: string }`
+
+**When to use:** Always prefer `cdp_click` over `click_element` and `click_by_text` on React/Vue/Angular sites, custom components, date pickers, and any element where `click_element` fails silently.
+
+---
+
+#### `cdp_type`
+**Params:** `selector` (optional CSS selector), `text` (required), `clearFirst` (optional bool, default false)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_type selector=#location text="New York"`
+**Behavior:** Clicks to focus the element, optionally clears with Ctrl+A then Backspace, then types each character individually via keyboard events. This triggers React onChange, autocomplete keystroke handlers, input validation, and works on contenteditable elements.
+**Response:** `{ typed: true, length: number, selector: string|null }` or `{ typed: false, error: string }`
+
+**When to use:** Always prefer `cdp_type` over `type_text` and `type_into_label` for:
+- Autocomplete/typeahead fields (the character-by-character typing triggers search suggestions)
+- React/Vue controlled inputs (native keyboard events update React state properly)
+- Contenteditable elements (rich text editors, comment boxes)
+- Masked inputs (phone numbers, credit cards, dates)
+
+---
+
+#### `cdp_get_accessibility_tree`
+**Params:** `maxDepth` (optional, default 10), `interactiveOnly` (optional bool, default true)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_get_accessibility_tree`
+**Behavior:** Returns the full accessibility tree from the browser. Pierces shadow DOM and iframes automatically. No element limit. Each node includes: role, name, value, description, focused, disabled, backendDOMNodeId.
+**Response:** `{ url: string, title: string, total: number, interactive: number, elements: [{ nodeId, role, name, value, description, focused, disabled, backendDOMNodeId }] }`
+
+**When to use:**
+- When `get_page_summary` returns too few elements or misses expected UI components
+- On pages with shadow DOM (Material UI, Salesforce, etc.)
+- On pages with iframes (embedded forms, payment widgets)
+- To discover the semantic structure of complex pages (what roles, labels, and states are present)
+
+---
+
+#### `cdp_press_key`
+**Params:** `key` (required — e.g. `Enter`, `Tab`, `ArrowDown`, `Escape`), `modifiers` (optional number: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_press_key key=Enter`
+**CLI (with modifier):** `.venv/bin/python cli/main.py autopilot browser cdp_press_key key=a modifiers=2` (Ctrl+A)
+**Behavior:** Dispatches OS-level key events that trigger framework handlers, page shortcuts, and default browser behaviors (unlike the DOM-level `press_key`).
+**Response:** `{ pressed: true, key: string, modifiers: number }`
+
+---
+
+### Recommended Command Strategy for Modern SPAs
+
+For sites like Expedia, Salesforce, HubSpot, or any React/Vue SPA:
+
+1. **Read the page:** Start with `get_page_summary`. If it shows too few elements or misses expected UI, use `cdp_get_accessibility_tree` instead.
+2. **Click:** Use `cdp_click` (not `click_element`). It fires real mouse events that all frameworks respond to.
+3. **Type:** Use `cdp_type` (not `type_text`). Character-by-character typing triggers autocomplete, search-as-you-type, and React state updates.
+4. **Select from autocomplete/dropdown:** After typing with `cdp_type`, wait 1-2s, then use `cdp_press_key key=ArrowDown` + `cdp_press_key key=Enter` to select from suggestions. Or use `cdp_get_accessibility_tree` to find the suggestion items and `cdp_click` on them.
+5. **Navigate date pickers:** `cdp_click` to open, `cdp_click` on month/year arrows, `cdp_click` on the target day.
+6. **Keys:** Use `cdp_press_key` instead of `press_key` when standard `press_key` fails.
+
+---
+
 ## Decision Flow
 
 ```
@@ -480,12 +550,15 @@ Start
 | HAR file not found after stop | Extension may not have uploaded — wait longer, check `workflow captures` |
 | 0 tools after export | The workflow only recorded HTML pages, not API calls — the site may use server-side rendering |
 | Login redirect loop | The session cookie may not persist — check if the extension is on the same tab |
-| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, use `click_element` with selector instead |
-| Autocomplete dropdown not visible in `get_page_summary` | Use `query_elements` with `[role="option"]` or `[role="listbox"]` selectors, or `take_screenshot` to see the dropdown |
-| Date picker not responding to `type_text` | Click the date field first to open the picker, then navigate using the picker's UI controls |
-| `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Click it to open, then `click_by_text` on the desired option |
-| `eval_js` returns CSP error | Use `click_element`, `type_text`, `press_key` instead — these go through the extension content script |
+| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, or use `cdp_get_accessibility_tree` to find elements by role/name. Use `cdp_click` with selector instead |
+| `click_element` doesn't work on React/Vue site | Use `cdp_click` instead — it fires OS-level mouse events that all frameworks respond to |
+| Autocomplete dropdown not visible in `get_page_summary` | Use `cdp_get_accessibility_tree` to find dropdown items by role, or `cdp_press_key key=ArrowDown` + `key=Enter` to select |
+| `type_text` doesn't trigger autocomplete suggestions | Use `cdp_type` instead — it types character-by-character, triggering keystroke handlers and search-as-you-type |
+| Date picker not responding to `type_text` | Use `cdp_click` to open the picker, then navigate using `cdp_click` on the picker's UI controls |
+| `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Use `cdp_click` to open it, then `cdp_get_accessibility_tree` to find options, then `cdp_click` to select |
+| `eval_js` returns CSP error | Use `cdp_click`, `cdp_type`, `cdp_press_key` instead — CDP commands bypass CSP |
 | Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
+| Chrome shows "debugging" banner | Normal — CDP commands require the debugger API. The banner disappears when commands stop |
 | Extension reloaded mid-capture, HAR lost | Capture is dead. Run `autopilot stop-capture`, then `autopilot resume-capture <wf_id>` to start a fresh capture on the same workflow |
 | `verify-extension` shows UNSUPPORTED commands | Extension is stale. Reload it in `chrome://extensions`, then re-run `verify-extension` |
 
