@@ -507,38 +507,16 @@ def generate(
     keepalive_actions: list[dict] = []
     keepalive_health_checks: list[dict] = []
 
-    # Use post-login URL for url_check if known; always ensure scheme present.
-    def _ensure_scheme(url: str, fallback_scheme: str = "http") -> str:
-        if url.startswith("http://") or url.startswith("https://"):
-            return url
-        return f"{fallback_scheme}://{url}"
-
-    if post_login_url:
-        keepalive_health_checks.append(
-            {
-                "type": "url_check",
-                "url": _ensure_scheme(post_login_url),
-                "expect_status": 200,
-            }
-        )
-    else:
-        # Fall back to a path we know returns 200 — avoid bare origin which
-        # typically redirects (302) and fails an exact status check.
-        keepalive_health_checks.append(
-            {
-                "type": "url_check",
-                "url": _ensure_scheme(origin) + "/",
-                "expect_status": 200,
-            }
-        )
-        review_items.append(
-            {
-                "type": "keepalive_weak",
-                "severity": "warning",
-                "message": "Keepalive health check uses origin URL — consider adding a dom_check for an authenticated-only element",
-                "confidence": "low",
-            }
-        )
+    # Use a dom_check on body as the primary health check — it verifies the
+    # browser page is rendered without making a separate HTTP request that
+    # can be rate-limited (429) or redirected by the target site.
+    keepalive_health_checks.append(
+        {
+            "type": "dom_check",
+            "selector": "body",
+            "exists": True,
+        }
+    )
 
     keepalive_config: dict[str, Any] = {
         "interval_seconds": 300,

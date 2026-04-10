@@ -13,6 +13,7 @@ Subcommands:
     login review <bundle_file>         - Print review items from bundle file
     login register <bundle_file>       - Register with Tabby (needs TABBY_ADMIN_TOKEN)
     login validate <bundle_file>       - Wait for Tabby profile to become HEALTHY
+    login credentials <bundle_file>    - Set username/password for a registered profile
     login import <session_id>          - export + review + register [+ validate]
 
     workflow record <name> <url>       - Create workflow session + print extension instructions
@@ -654,6 +655,13 @@ def cmd_login_register(args: argparse.Namespace) -> int:
         ]
         if patched_urls:
             patched_draft = {**app_draft, "target_urls": patched_urls}
+        # Use dom_check instead of url_check — url_check is fragile (429, redirects)
+        patched_draft["keepalive_config"] = {
+            "interval_seconds": 300,
+            "actions": [],
+            "health_checks": [{"type": "dom_check", "selector": "body", "exists": True}],
+            "policy": "all",
+        }
         app_resp = _tabby_http("POST", "/apps", patched_draft, token=admin_token)
         assert isinstance(app_resp, dict)
         app_id: str = app_resp["app_id"]
@@ -688,6 +696,23 @@ def cmd_login_register(args: argparse.Namespace) -> int:
     }
     bundle_path.write_text(json.dumps(bundle, indent=2) + "\n")
 
+    # Add profile to Tabby cache so session ensure can find it
+    credential_ref = (
+        bundle.get("application_draft", {})
+        .get("login_config", {})
+        .get("credential_ref", f"k8s:secret/tabby-{profile_id}")
+    )
+    cache = _load_cache()
+    apps = cache.setdefault("apps", {})
+    entry = apps.setdefault(profile_id, {})
+    entry["app_id"] = app_id
+    entry["profile_db_id"] = profile_db_id
+    entry["credential_ref"] = credential_ref
+    defaults = cache.setdefault("default_profiles", [])
+    if profile_id not in defaults:
+        defaults.append(profile_id)
+    _save_cache(cache)
+
     print()
     print(_green(f"Registered profile '{profile_id}'"))
     print(f"  Application ID       : {_cyan(app_id)}")
@@ -696,7 +721,7 @@ def cmd_login_register(args: argparse.Namespace) -> int:
     print("  Version state        : STAGING")
     print()
     print("  Next steps:")
-    print(f"    {_bold(f'noui login validate {bundle_path}')}")
+    print(f"    {_bold(f'noui login credentials {bundle_path}')}")
     return 0
 
 
@@ -752,6 +777,77 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
 
     print()
     print(_green(f"Profile '{profile_db_id}' is {final_state}"))
+    return 0
+
+
+def cmd_login_credentials(args: argparse.Namespace) -> int:
+    """Set username and password for a registered login profile."""
+    bundle_path = Path(args.bundle_file)
+    if not bundle_path.exists():
+        print(_red(f"Bundle file not found: {bundle_path}"))
+        return 1
+
+    try:
+        bundle = json.loads(bundle_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to parse bundle: {exc}"))
+        return 1
+
+    provisioned = bundle.get("_provisioned")
+    if not provisioned:
+        print(_red("Bundle has not been registered yet. Run: noui login register"))
+        return 1
+
+    profile_id: str = provisioned["profile_id"]
+    profile_db_id: str = provisioned["profile_db_id"]
+    app_id: str = provisioned["app_id"]
+    credential_ref: str = (
+        bundle.get("application_draft", {})
+        .get("login_config", {})
+        .get("credential_ref", f"k8s:secret/tabby-{profile_id}")
+    )
+    secret = credential_ref.replace("k8s:secret/", "")
+    prefix = _env_prefix(secret)
+
+    print(f"Setting credentials for profile '{_bold(profile_id)}'")
+    print()
+
+    username = input("  Username (email): ").strip()
+    if not username:
+        print(_red("  Username cannot be empty."))
+        return 1
+
+    password = getpass.getpass("  Password: ")
+    if not password:
+        print(_red("  Password cannot be empty."))
+        return 1
+
+    # Update cache with username and credential_ref
+    cache = _load_cache()
+    apps = cache.setdefault("apps", {})
+    entry = apps.setdefault(profile_id, {})
+    entry["app_id"] = app_id
+    entry["profile_db_id"] = profile_db_id
+    entry["username"] = username
+    entry["credential_ref"] = credential_ref
+
+    # Add to default_profiles if not already there
+    defaults = cache.setdefault("default_profiles", [])
+    if profile_id not in defaults:
+        defaults.append(profile_id)
+
+    _save_cache(cache)
+
+    # Write password to .env.local
+    _write_env_vars(ENV_LOCAL, {f"{prefix}_PASSWORD": password})
+
+    print()
+    print(_green("Credentials saved."))
+    print(f"  Cache   : {TABBY_CREDS_CACHE}")
+    print(f"  Env file: {ENV_LOCAL}")
+    print()
+    print("  Next: start a browser session:")
+    print(f"    {_bold(f'noui tabby session ensure --profile {profile_id}')}")
     return 0
 
 
@@ -1094,7 +1190,7 @@ def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
     # Start HAR + click tracking via extension (best effort)
     har_started = False
     try:
-        _http(
+        result = _http(
             "POST",
             "/browser-commands/execute",
             {
@@ -1107,6 +1203,10 @@ def cmd_autopilot_start_capture(args: argparse.Namespace) -> int:
             },
             timeout=10,
         )
+        # The execute endpoint returns HTTP 200 even on extension errors —
+        # check the success field to detect failures.
+        if isinstance(result, dict) and result.get("success") is False:
+            raise RuntimeError(result.get("error", "Extension command failed"))
         har_started = True
     except Exception:
         # Fallback: try individual commands
@@ -1328,6 +1428,7 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
                 _primary_param = {
                     "navigate": "url",
                     "click_element": "selector",
+                    "click_at": "x",
                     "click_by_text": "text",
                     "type_text": "selector",
                     "type_into_label": "label",
@@ -1356,6 +1457,15 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
                         and "value" not in params
                     ):
                         params["value"] = arg
+                    elif cmd_type == "click_at" and "x" in params and "y" not in params:
+                        params["y"] = arg
+
+    # Convert types for specific commands
+    if cmd_type == "click_at":
+        params["x"] = float(params.get("x", 0))
+        params["y"] = float(params.get("y", 0))
+    if cmd_type == "click_by_text" and "exact" in params:
+        params["exact"] = str(params["exact"]).lower() in ("true", "1", "yes")
 
     try:
         result = _http(
@@ -1562,7 +1672,7 @@ def cmd_autopilot_resume_capture(args: argparse.Namespace) -> int:
     # Start HAR + click tracking via extension
     har_started = False
     try:
-        _http(
+        result = _http(
             "POST",
             "/browser-commands/execute",
             {
@@ -1575,6 +1685,8 @@ def cmd_autopilot_resume_capture(args: argparse.Namespace) -> int:
             },
             timeout=10,
         )
+        if isinstance(result, dict) and result.get("success") is False:
+            raise RuntimeError(result.get("error", "Extension command failed"))
         har_started = True
     except Exception:
         try:
@@ -3203,7 +3315,7 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     secret_dir.mkdir(parents=True, exist_ok=True)
     if entry.get("username"):
         env_local_vars = _load_env_local()
-        prefix = _env_prefix(_secret_name(profile_id))
+        prefix = _env_prefix(secret_name)
         username = entry["username"]
         password = env_local_vars.get(f"{prefix}_PASSWORD", "")
         if not password:
@@ -3384,6 +3496,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "validate", help="Wait for Tabby profile to become HEALTHY"
     )
     login_validate.add_argument("bundle_file", help="Path to bundle JSON file")
+
+    login_credentials = login_sub.add_parser(
+        "credentials", help="Set username/password for a registered profile"
+    )
+    login_credentials.add_argument("bundle_file", help="Path to bundle JSON file")
 
     login_import = login_sub.add_parser(
         "import", help="Convenience: export + review + register [+ validate]"
@@ -3609,7 +3726,7 @@ def _build_parser() -> argparse.ArgumentParser:
 def _dispatch_login(args: argparse.Namespace) -> int:
     cmd = getattr(args, "login_command", None)
     if cmd is None:
-        print("Usage: noui login {record,list,export,review,register,validate,import}")
+        print("Usage: noui login {record,list,export,review,register,validate,credentials,import}")
         return 1
     dispatch = {
         "record": cmd_login_record,
@@ -3618,6 +3735,7 @@ def _dispatch_login(args: argparse.Namespace) -> int:
         "review": cmd_login_review,
         "register": cmd_login_register,
         "validate": cmd_login_validate,
+        "credentials": cmd_login_credentials,
         "import": cmd_login_import,
     }
     fn = dispatch.get(cmd)

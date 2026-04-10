@@ -207,8 +207,15 @@ Strategy:
 1. Click the date field to open the picker
 2. `get_page_summary` or `query_elements` to find the picker's navigation (month/year arrows, day cells)
 3. Navigate month-by-month using the arrow buttons if needed
-4. `click_by_text "<day number>"` or `click_element selector="[data-date='2025-01-15']"` for the target date
+4. Click the target date using one of these approaches (in priority order):
+   - `click_element` with the unique selector returned by `query_elements` — selectors are now unique and directly usable
+   - `click_at x=<center_x> y=<center_y>` using the `rect` from `query_elements` (compute center: `x + width/2`, `y + height/2`) — best for grids where cells lack unique attributes
+   - `click_by_text "<day number>"` — only works if day cells are buttons/links
+   - `click_element selector="[data-date='2025-01-15']"` — if the picker uses data attributes
 5. If the picker has separate fields (month dropdown, day dropdown, year dropdown), treat each as its own interaction
+6. When closing the picker, use `click_by_text "Done" exact=true` to avoid matching skip-navigation links
+
+**Important:** If clicking a calendar cell (`td`) has no effect, click the **inner interactive element** instead (e.g., `div.uitk-day-button`, `span`, `[role='gridcell']`). The container element may not handle click events — the actual click target is often a child element.
 
 Fallback: Try `type_text` directly into the date input with the expected format (e.g., `01/15/2025`, `2025-01-15`) — some pickers accept typed input even if they show a widget.
 
@@ -230,7 +237,14 @@ If `get_page_summary` returns elements but you cannot figure out what the page l
 .venv/bin/python cli/main.py autopilot browser take_screenshot
 ```
 
-This captures the current browser viewport. Use it to:
+This captures the current browser viewport. The response includes a `file_path` — use it to read the screenshot image:
+
+```bash
+# The response will include: "file_path": "/path/to/data/screenshots/<uuid>.png"
+# Use that path to view the screenshot
+```
+
+Use it to:
 - See what a custom widget actually looks like
 - Verify whether a dropdown/modal is open or closed
 - Check if an error message appeared
@@ -244,12 +258,18 @@ Use sparingly — screenshots are heavier than text queries.
 
 When an action fails, follow this escalation sequence:
 
+### `click_by_text` matches wrong element
+
+1. Use `exact=true` for an exact text match: `click_by_text "Done" exact=true`
+2. Note: elements smaller than 10x10px (e.g., skip-navigation links) are automatically filtered out
+
 ### `click_by_text` fails ("not found")
 
 1. Run `get_page_summary` to see the exact text of all visible elements
 2. Try with a shorter or different substring (`click_by_text` uses case-insensitive partial match)
-3. Try `click_element` with a CSS selector from the summary
-4. If still failing, the element may be in shadow DOM or an iframe — use `query_elements` with broader selectors or `take_screenshot`
+3. Try `click_element` with a CSS selector from the summary — selectors from `query_elements` and `get_page_summary` are unique and can be used directly
+4. Try `click_at` with coordinates from `query_elements` rect output
+5. If still failing, the element may be in shadow DOM or an iframe — use `query_elements` with broader selectors or `take_screenshot`
 
 ### `type_into_label` fails ("not found")
 
@@ -259,9 +279,11 @@ When an action fails, follow this escalation sequence:
 
 ### Element exists but click has no effect
 
-1. The element might need a different event — try `eval_js code="document.querySelector('<selector>').click()"`
-2. The element might be behind an overlay — check for modals with `query_elements selector="[role='dialog'], .modal, .overlay"`
-3. Take a screenshot to see what is blocking interaction
+1. Try clicking the **inner interactive element** instead — container elements (e.g., `td`, `div`) may not handle click events; the actual target is often a child (e.g., `div.day-button`, `span`, `[role='gridcell']`)
+2. Try `click_at` with the element's center coordinates from `query_elements` rect — this bypasses selector issues entirely
+3. The element might need a different event — try `eval_js code="document.querySelector('<selector>').click()"`
+4. The element might be behind an overlay — check for modals with `query_elements selector="[role='dialog'], .modal, .overlay"`
+5. Take a screenshot to see what is blocking interaction
 
 ### Page seems stuck / not updating after action
 
@@ -336,7 +358,7 @@ They proxy to `POST http://localhost:8002/browser-commands/execute` with body `{
 #### `get_page_summary`
 **Params:** none
 **Response:** `{ url: string, title: string, total: number, returned: number (max 60), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, selector }] }`
-Returns all visible interactive elements (`a, button, input, select, textarea, [role="button|link|tab|menuitem"]`). Hidden elements (0x0 rect) are filtered out. Use this to understand what is on the page before acting.
+Returns all visible interactive elements (`a, button, input, select, textarea, [role="button|link|tab|menuitem"]`). Hidden elements (0x0 rect) are filtered out. **Selectors are unique** and can be passed directly to `click_element`. Use this to understand what is on the page before acting.
 
 ---
 
@@ -351,13 +373,23 @@ Returns all visible interactive elements (`a, button, input, select, textarea, [
 **Params:** `selector` (required, CSS selector string)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser click_element selector=#my-btn`
 **Response:** `{ clicked: true, tagName: string, id: string|null, textContent: string (max 100) }` or `{ clicked: false, error: string }`
+**Tip:** Selectors from `query_elements` and `get_page_summary` are unique and can be passed directly to this command.
+
+---
+
+#### `click_at`
+**Params:** `x` (required, number), `y` (required, number) — coordinates from `query_elements` rect output (compute center: `rect.x + rect.width/2`, `rect.y + rect.height/2`)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_at x=533 y=1741` or `click_at 533 1741`
+**Behavior:** Finds the element at the given coordinates and clicks it. Handles out-of-viewport elements by scrolling them into view first. Falls back to brute-force element search if `elementFromPoint` fails.
+**Response:** `{ clicked: true, tagName: string, id: string|null, textContent: string (max 100), x: number, y: number, method: string }` or `{ clicked: false, error: string }`
+**Use case:** Best for custom widgets (date pickers, calendar grids, canvas UIs) where elements lack unique CSS selectors or data attributes.
 
 ---
 
 #### `click_by_text`
-**Params:** `text` (required, string — case-insensitive partial match)
-**CLI:** `.venv/bin/python cli/main.py autopilot browser click_by_text "Sign In"`
-**Searches:** `a, button, [role="button"], input[type="submit"], input[type="button"]` — only visible elements.
+**Params:** `text` (required, string — case-insensitive partial match), `exact` (optional, bool, default false — when true, matches full trimmed text instead of substring)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_by_text "Sign In"` or `click_by_text "Done" exact=true`
+**Searches:** `a, button, [role="button"], input[type="submit"], input[type="button"]` — only visible elements (minimum 10x10px, skip-navigation links are filtered out).
 **Response:** `{ clicked: true, tagName: string, text: string }` or `{ clicked: false, error: string }`
 
 ---
@@ -411,15 +443,15 @@ Returns all visible interactive elements (`a, button, input, select, textarea, [
 **Params:** `selector` (required, CSS selector), `includeText` (optional, bool, default `true`), `maxResults` (optional, number, default 20)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser query_elements selector="input, button"`
 **Response:** `{ count: number (total matched), returned: number, elements: [{ index, tagName, id, className, type, name, href, value (max 200), placeholder, disabled, visible, rect: {x,y,width,height}, selector, textContent? (max 200) }] }`
-Use this for precise element discovery when `get_page_summary` is not enough.
+Use this for precise element discovery when `get_page_summary` is not enough. **Selectors are unique** — each returned `selector` value can be passed directly to `click_element` to target that exact element. The `rect` coordinates can also be used with `click_at` (compute center: `rect.x + rect.width/2`, `rect.y + rect.height/2`).
 
 ---
 
 #### `take_screenshot`
 **Params:** none
 **CLI:** `.venv/bin/python cli/main.py autopilot browser take_screenshot`
-**Response:** `{ screenshot_id: string, url: string, image_url: string }`
-Uploads the screenshot to the backend. Use sparingly.
+**Response:** `{ screenshot_id: string, url: string, file_path: string, image_url: string }`
+Uploads the screenshot to the backend. The `file_path` field contains the local disk path to the saved PNG — use this path to read the screenshot. Use sparingly.
 
 ---
 
@@ -428,6 +460,140 @@ Uploads the screenshot to the backend. Use sparingly.
 **CLI:** `.venv/bin/python cli/main.py autopilot browser eval_js code="return document.title"`
 **Response:** `{ success: true, result: any }` or `{ success: false, error: string }`
 **Note:** Blocked by CSP on many sites (Google, etc.). Prefer other commands when possible.
+
+---
+
+### CDP Commands (OS-Level Input)
+
+These commands use Chrome DevTools Protocol to dispatch **OS-level input events** — the same mechanism Playwright/Puppeteer use. They work with React, Vue, Angular, custom date pickers, autocomplete fields, and any framework. **Prefer these over the standard commands for all interactions on modern web apps.**
+
+A "debugging" banner will appear in Chrome when CDP commands are first used — this is expected.
+
+---
+
+#### `cdp_click`
+**Params:** `selector` (CSS selector) OR `x`/`y` (coordinates). Provide one or both.
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_click selector=#search-btn`
+**CLI (coordinates):** `.venv/bin/python cli/main.py autopilot browser cdp_click x=400 y=300`
+**Behavior:** Scrolls element into view, dispatches real mousePressed/mouseReleased events at element center. Works with React onClick, Vue @click, custom dropdown triggers, date picker buttons, etc.
+**Response:** `{ clicked: true, x: number, y: number, selector: string|null }` or `{ clicked: false, error: string }`
+
+**When to use:** Always prefer `cdp_click` over `click_element` and `click_by_text` on React/Vue/Angular sites, custom components, date pickers, and any element where `click_element` fails silently.
+
+---
+
+#### `cdp_type`
+**Params:** `selector` (optional CSS selector), `text` (required), `clearFirst` (optional bool, default false)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_type selector=#location text="New York"`
+**Behavior:** Clicks to focus the element, optionally clears with Ctrl+A then Backspace, then types each character individually via keyboard events. This triggers React onChange, autocomplete keystroke handlers, input validation, and works on contenteditable elements.
+**Response:** `{ typed: true, length: number, selector: string|null }` or `{ typed: false, error: string }`
+
+**When to use:** Always prefer `cdp_type` over `type_text` and `type_into_label` for:
+- Autocomplete/typeahead fields (the character-by-character typing triggers search suggestions)
+- React/Vue controlled inputs (native keyboard events update React state properly)
+- Contenteditable elements (rich text editors, comment boxes)
+- Masked inputs (phone numbers, credit cards, dates)
+
+---
+
+#### `cdp_get_accessibility_tree`
+**Params:** `maxDepth` (optional, default 10), `interactiveOnly` (optional bool, default true)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_get_accessibility_tree`
+**Behavior:** Returns the full accessibility tree from the browser. Pierces shadow DOM and iframes automatically. No element limit. Each node includes: role, name, value, description, focused, disabled, backendDOMNodeId.
+**Response:** `{ url: string, title: string, total: number, interactive: number, elements: [{ nodeId, role, name, value, description, focused, disabled, backendDOMNodeId }] }`
+
+**When to use:**
+- When `get_page_summary` returns too few elements or misses expected UI components
+- On pages with shadow DOM (Material UI, Salesforce, etc.)
+- On pages with iframes (embedded forms, payment widgets)
+- To discover the semantic structure of complex pages (what roles, labels, and states are present)
+
+---
+
+#### `cdp_press_key`
+**Params:** `key` (required — e.g. `Enter`, `Tab`, `ArrowDown`, `Escape`), `modifiers` (optional number: 1=Alt, 2=Ctrl, 4=Meta, 8=Shift)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser cdp_press_key key=Enter`
+**CLI (with modifier):** `.venv/bin/python cli/main.py autopilot browser cdp_press_key key=a modifiers=2` (Ctrl+A)
+**Behavior:** Dispatches OS-level key events that trigger framework handlers, page shortcuts, and default browser behaviors (unlike the DOM-level `press_key`).
+**Response:** `{ pressed: true, key: string, modifiers: number }`
+
+---
+
+### Scroll Commands
+
+These commands let you scroll the page or specific containers to discover offscreen elements, trigger lazy loading, and navigate long pages.
+
+---
+
+#### `scroll_page`
+**Params:** `direction` (required: `up`, `down`, `left`, `right`), `amount` (optional: `page` (default), `half`, or pixel count)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down`
+**CLI (half page):** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down amount=half`
+**CLI (pixels):** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down amount=300`
+**Behavior:** Dispatches a native mouse wheel event at viewport center via CDP. Triggers infinite-scroll listeners and lazy-load observers. Waits 350ms for content to settle.
+**Response:** `{ scrolled: true, direction, deltaX, deltaY, scrollX, scrollY, scrollWidth, scrollHeight, atTop, atBottom }`
+
+**When to use:** Scrolling the main page to reveal more content, trigger lazy loading, or navigate search results. Check `atBottom: true` to know you've reached the end.
+
+---
+
+#### `scroll_element`
+**Params:** `selector` (required: CSS selector for scrollable container), `direction` (required: `up`, `down`, `left`, `right`), `amount` (optional: `page` (default), `half`, or pixel count)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_element selector=.results-list direction=down`
+**Behavior:** Finds the container (piercing shadow DOM), calls `scrollBy()`, dispatches a scroll event for lazy-load listeners.
+**Response:** `{ scrolled: true, selector, direction, scrollTop, scrollLeft, scrollHeight, scrollWidth, clientHeight, clientWidth }` or `{ scrolled: false, error: string }`
+
+**When to use:** Scrolling within sidebars, modal bodies, dropdown lists, chat panels, or any scrollable container that isn't the main page. Compare `scrollTop + clientHeight` vs `scrollHeight` to know if you've reached the bottom.
+
+---
+
+#### `scroll_to_element`
+**Params:** `selector` (required: CSS selector), `block` (optional: `center` (default), `start`, `end`, `nearest`)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_to_element selector=#submit-btn`
+**Behavior:** Finds the element (piercing shadow DOM) and scrolls it into view. Returns the element's bounding rect after scroll.
+**Response:** `{ scrolled: true, selector, tagName, text, rect: { x, y, width, height } }` or `{ scrolled: false, error: string }`
+
+**When to use:** When you know the selector of an offscreen element and want to bring it into view before interacting with it.
+
+---
+
+### Recommended Command Strategy for Modern SPAs
+
+For sites like Expedia, Salesforce, HubSpot, or any React/Vue SPA:
+
+1. **Read the page:** Start with `get_page_summary`. If it shows too few elements or misses expected UI, use `cdp_get_accessibility_tree` instead.
+2. **Click:** Use `cdp_click` or `click_at` for reliable clicking. They fire real mouse events that all frameworks respond to.
+3. **Type:** Use `cdp_type` (not `type_text`). Character-by-character typing triggers autocomplete, search-as-you-type, and React state updates.
+4. **Select from autocomplete/dropdown:** After typing with `cdp_type`, wait 1-2s, then use `cdp_press_key key=ArrowDown` + `cdp_press_key key=Enter` to select from suggestions. Or use `cdp_get_accessibility_tree` to find the suggestion items and `cdp_click` on them.
+5. **Navigate date pickers:** `cdp_click` to open, `cdp_click` on month/year arrows, `cdp_click` on the target day. Or use `click_at` with coordinates from `query_elements`.
+6. **Keys:** Use `cdp_press_key` instead of `press_key` when standard `press_key` fails.
+7. **Scroll to discover more:** If `get_page_summary` shows `total > returned`, use `scroll_page direction=down` then re-query to find more elements.
+
+---
+
+### Handling Long Pages and Scrollable Containers
+
+**Long pages / search results:**
+1. Run `get_page_summary` — check if `total > returned` (elements were cut off)
+2. `scroll_page direction=down` to reveal more content
+3. Wait 1-2s for lazy-loaded content to appear
+4. Run `get_page_summary` again to see the new elements
+5. Repeat until you find what you need or `atBottom` is true
+
+**Infinite scroll (e.g. social feeds, search results):**
+1. `scroll_page direction=down` — this triggers scroll event listeners that load more content
+2. Wait 2-3s for new items to load
+3. `get_page_summary` to check for new elements
+4. Repeat as needed — stop when no new elements appear or you find what you need
+
+**Scrollable containers (sidebars, modals, dropdowns):**
+1. Identify the container selector (use `query_elements` or `cdp_get_accessibility_tree`)
+2. `scroll_element selector=<container> direction=down`
+3. Re-query elements in the container to see what appeared
+4. Check `scrollTop + clientHeight >= scrollHeight` to know if you've reached the bottom
+
+**Known element offscreen:**
+- Use `scroll_to_element selector=<target>` to bring it into view, then interact with it
 
 ---
 
@@ -480,12 +646,20 @@ Start
 | HAR file not found after stop | Extension may not have uploaded — wait longer, check `workflow captures` |
 | 0 tools after export | The workflow only recorded HTML pages, not API calls — the site may use server-side rendering |
 | Login redirect loop | The session cookie may not persist — check if the extension is on the same tab |
-| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, use `click_element` with selector instead |
+| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, use `click_element` with unique selector or `click_at` with coordinates |
+| `click_by_text` matched wrong element | Use `exact=true` for exact text matching: `click_by_text "Done" exact=true` |
+| Calendar/grid cells have no unique selectors | Use `query_elements` — selectors are now unique. Or use `click_at` with rect coordinates |
 | Autocomplete dropdown not visible in `get_page_summary` | Use `query_elements` with `[role="option"]` or `[role="listbox"]` selectors, or `take_screenshot` to see the dropdown |
 | Date picker not responding to `type_text` | Click the date field first to open the picker, then navigate using the picker's UI controls |
 | `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Click it to open, then `click_by_text` on the desired option |
 | `eval_js` returns CSP error | Use `click_element`, `type_text`, `press_key` instead — these go through the extension content script |
 | Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
+| `click_element` doesn't work on React/Vue site | Use `cdp_click` or `click_at` instead — they fire OS-level mouse events that all frameworks respond to |
+| `type_text` doesn't trigger autocomplete suggestions | Use `cdp_type` instead — it types character-by-character, triggering keystroke handlers and search-as-you-type |
+| Chrome shows "debugging" banner | Normal — CDP commands require the debugger API. The banner disappears when commands stop |
+| Element exists but not in `get_page_summary` | It may be offscreen — use `scroll_page direction=down` and re-query, or `scroll_to_element` if you know the selector |
+| Infinite scroll page doesn't load more items | Use `scroll_page` (CDP wheel events) instead of keyboard-based scrolling — it triggers scroll event listeners |
+| Can't scroll inside a modal/sidebar | Use `scroll_element selector=<container>` targeting the scrollable container, not `scroll_page` |
 | Extension reloaded mid-capture, HAR lost | Capture is dead. Run `autopilot stop-capture`, then `autopilot resume-capture <wf_id>` to start a fresh capture on the same workflow |
 | `verify-extension` shows UNSUPPORTED commands | Extension is stale. Reload it in `chrome://extensions`, then re-run `verify-extension` |
 

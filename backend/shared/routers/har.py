@@ -23,8 +23,8 @@ router = APIRouter(tags=["har"])
 
 async def _resolve_session_type(session_id: str, db: AsyncSession) -> str | None:
     """Detect whether session_id belongs to a login, workflow, or capture session."""
-    from backend.elicitation.models import CaptureSession
     from backend.login.models import LoginSession
+    from backend.shared.session_resolution import resolve_domain_session
     from backend.workflow.models import WorkflowSession
 
     r = await db.execute(select(LoginSession).where(LoginSession.id == session_id))
@@ -33,9 +33,10 @@ async def _resolve_session_type(session_id: str, db: AsyncSession) -> str | None
     r = await db.execute(select(WorkflowSession).where(WorkflowSession.id == session_id))
     if r.scalar_one_or_none():
         return "workflow"
-    r = await db.execute(select(CaptureSession).where(CaptureSession.id == session_id))
-    if r.scalar_one_or_none():
-        return "workflow"  # capture sessions feed into the workflow export path
+    # session_id might be a capture_session_id — resolve via process_id linkage
+    resolved = await resolve_domain_session(session_id, db)
+    if resolved:
+        return resolved[1]  # session_type
     return None
 
 
@@ -127,13 +128,27 @@ async def upload_har_compat(
 ) -> dict:
     """Extension-compat endpoint: upload HAR without specifying session_type.
 
-    Resolves session_type by looking up session_id in login_sessions then
-    workflow_sessions. Falls back to 'unknown' so the file is never silently dropped.
+    The extension sends the ``capture_session_id`` in the URL.  This endpoint
+    resolves the domain session (login or workflow) via
+    ``CaptureSession → process_id → LoginSession / WorkflowSession`` and stores
+    the HAR under the **domain** session ID so that analysis endpoints find it
+    with a simple ``session_id + session_type`` query.
     """
-    session_type = await _resolve_session_type(session_id, db) or "unknown"
+    from backend.elicitation.models import CaptureSession
+    from backend.shared.session_resolution import resolve_domain_session
+
+    # Resolve domain session to get the correct storage ID and type
+    resolved = await resolve_domain_session(session_id, db)
+    if resolved:
+        store_id, session_type = resolved
+    else:
+        # Direct session or unknown — fall back to type resolution
+        session_type = await _resolve_session_type(session_id, db) or "unknown"
+        store_id = session_id
+
     har_dir = Path(settings.data_dir) / "har" / session_type
     har_dir.mkdir(parents=True, exist_ok=True)
-    file_path = har_dir / f"{session_id}.har"
+    file_path = har_dir / f"{store_id}.har"
 
     content = await file.read()
     try:
@@ -143,11 +158,22 @@ async def upload_har_compat(
         logger.warning("HAR upload for %s is not valid JSON — storing anyway", session_id)
 
     file_path.write_bytes(content)
-    logger.info("Compat HAR upload for session %s (resolved type: %s)", session_id, session_type)
+    logger.info(
+        "Compat HAR upload: capture_session=%s → stored as %s/%s",
+        session_id,
+        session_type,
+        store_id,
+    )
+
+    # Also update CaptureSession.har_file_path so the elicitation GET route can find it
+    cs_result = await db.execute(select(CaptureSession).where(CaptureSession.id == session_id))
+    cs = cs_result.scalar_one_or_none()
+    if cs:
+        cs.har_file_path = str(file_path)
 
     existing = await db.execute(
         select(HarFile).where(
-            HarFile.session_id == session_id,
+            HarFile.session_id == store_id,
             HarFile.session_type == session_type,
         )
     )
@@ -163,7 +189,7 @@ async def upload_har_compat(
             "file_path": old.file_path,
         }
 
-    har_record = HarFile(session_id=session_id, session_type=session_type, file_path=str(file_path))
+    har_record = HarFile(session_id=store_id, session_type=session_type, file_path=str(file_path))
     db.add(har_record)
     await db.commit()
     await db.refresh(har_record)

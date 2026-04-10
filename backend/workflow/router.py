@@ -234,13 +234,24 @@ async def export_mcp(
     )
     url_rows = list(url_result.scalars().all())
 
-    # Load HarFile record — try both session_id and capture_session_id
+    # Load HarFile record — try capture_session_id first, then workflow session_id.
+    # The HAR upload endpoint resolves capture_session_id → workflow session_id via
+    # resolve_domain_session, so HarFile.session_id is typically the workflow ID.
     har_result = await db.execute(
         select(HarFile)
         .where(HarFile.session_id == har_lookup_id)
         .order_by(HarFile.created_at.desc())
     )
     har_file = har_result.scalar_one_or_none()
+
+    # If lookup was by capture_session_id and missed, fall back to workflow session_id
+    if not har_file and capture_session_id and har_lookup_id != session_id:
+        har_result = await db.execute(
+            select(HarFile)
+            .where(HarFile.session_id == session_id)
+            .order_by(HarFile.created_at.desc())
+        )
+        har_file = har_result.scalar_one_or_none()
 
     if not har_file:
         raise HTTPException(status_code=422, detail="No HAR file found for this session")
