@@ -237,7 +237,14 @@ If `get_page_summary` returns elements but you cannot figure out what the page l
 .venv/bin/python cli/main.py autopilot browser take_screenshot
 ```
 
-This captures the current browser viewport. Use it to:
+This captures the current browser viewport. The response includes a `file_path` — use it to read the screenshot image:
+
+```bash
+# The response will include: "file_path": "/path/to/data/screenshots/<uuid>.png"
+# Use that path to view the screenshot
+```
+
+Use it to:
 - See what a custom widget actually looks like
 - Verify whether a dropdown/modal is open or closed
 - Check if an error message appeared
@@ -443,8 +450,8 @@ Use this for precise element discovery when `get_page_summary` is not enough. **
 #### `take_screenshot`
 **Params:** none
 **CLI:** `.venv/bin/python cli/main.py autopilot browser take_screenshot`
-**Response:** `{ screenshot_id: string, url: string, image_url: string }`
-Uploads the screenshot to the backend. Use sparingly.
+**Response:** `{ screenshot_id: string, url: string, file_path: string, image_url: string }`
+Uploads the screenshot to the backend. The `file_path` field contains the local disk path to the saved PNG — use this path to read the screenshot. Use sparingly.
 
 ---
 

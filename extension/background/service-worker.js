@@ -1669,6 +1669,7 @@ const _commandHandlers = {
     return {
       screenshot_id: screenshotData.id,
       url: tab.url || "",
+      file_path: screenshotData.file_path || null,
       image_url: `${BACKEND_URL}/screenshots/${screenshotData.id}/image`,
     };
   },
