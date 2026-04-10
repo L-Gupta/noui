@@ -132,7 +132,29 @@ Registered profile '<profile_id>'
 
 ---
 
-## Step 7 — Validate the Profile
+## Step 7 — Set Credentials
+
+After registration, provide the login credentials (username/password) so that Tabby's browser worker can perform the automated login:
+
+```bash
+.venv/bin/python cli/main.py login credentials login_recordings/noui-<session_id8>-bundle.json
+```
+
+The CLI will prompt interactively for:
+- **Username (email):** the account email used to log in
+- **Password:** entered with masked input (not echoed)
+
+Credentials are stored in:
+- `tabby/.tabby-noui-client.json` (username + profile metadata)
+- `tabby/.env.local` (password as `TABBY_NOUI_<PROFILE>_PASSWORD`)
+
+**This step is required** before `tabby session ensure` can start a browser session — without it the worker will fail with `Credentials not found`.
+
+> **IMPORTANT:** This command requires user interaction (keyboard input). Ask the user to run it themselves via `! .venv/bin/python cli/main.py login credentials <bundle.json>` so that credentials are entered securely in their terminal.
+
+---
+
+## Step 8 — Validate the Profile
 
 ```bash
 .venv/bin/python cli/main.py login validate login_recordings/noui-<session_id8>-bundle.json
@@ -150,18 +172,24 @@ Polls Tabby for up to 60 seconds waiting for the profile to reach HEALTHY state.
 
 ---
 
-## Step 8 — Ensure a Live Tabby Browser Session
+## Step 9 — Ensure a Live Tabby Browser Session
 
 A HEALTHY profile in Tabby is a service configuration record. It does **not** mean a live browser session is running. The runtime auth adapter (`noui_runtime/auth.py`) needs an active session worker to fetch credentials at tool-call time.
 
 ```bash
-.venv/bin/python cli/main.py tabby session ensure
+.venv/bin/python cli/main.py tabby session ensure --profile <profile_id>
 ```
 
-Starts (or verifies) a persistent browser session worker for the registered profile. Expected output:
+Example:
+
+```bash
+.venv/bin/python cli/main.py tabby session ensure --profile expedia
+```
+
+Starts (or verifies) a persistent browser session worker for the registered profile. The `--profile` flag is **required** — without it the command uses the default profile list from the cache, which may not include the newly registered profile. Expected output:
 
 ```
-Session worker healthy for profile <tabby_profile_id>
+✓ Session for '<profile_id>' is HEALTHY
 ```
 
 **If this fails:**
@@ -170,7 +198,8 @@ Session worker healthy for profile <tabby_profile_id>
 |---|---|
 | `TABBY_CLIENT_ID` / `TABBY_CLIENT_SECRET` not set | Run `tabby setup` to provision agent credentials and write them to `.env` |
 | Worker starts but immediately exits | Check `.noui-backend.log`; confirm Tabby is reachable at `TABBY_API_HOST` |
-| Profile not found | Confirm `TABBY_ADMIN_TOKEN` is correct and the profile was registered via `login register` |
+| Profile not found in cache | Confirm `login register` ran successfully — it adds the profile to the cache automatically |
+| `Credentials not found for k8s:secret/...` | Run `login credentials <bundle.json>` to set username/password |
 
 > You only need to do this once per machine restart, or if the session worker has stopped. Run `tabby session status` to check current state without starting a new worker.
 
@@ -221,11 +250,13 @@ Start
   │
   Step 6: login register <bundle.json> → note tabby_profile_id
   │
-  Step 7: login validate <bundle.json>
+  Step 7: login credentials <bundle.json> (user enters username + password)
+  │
+  Step 8: login validate <bundle.json>
     ├─ HEALTHY → continue
     └─ FAILED  → re-record (return to Step 2)
   │
-  Step 8: tabby session ensure
+  Step 9: tabby session ensure --profile <profile_id>
     └─ session worker healthy → pass tabby_profile_id to /record-workflow
 ```
 
@@ -242,10 +273,11 @@ Start
 | `.venv/bin/python cli/main.py login export <session_id>` | Analyze session → write bundle JSON |
 | `.venv/bin/python cli/main.py login review <bundle.json>` | Print validation and review items |
 | `.venv/bin/python cli/main.py login register <bundle.json>` | Provision Application + STAGING ServiceProfile in Tabby |
+| `.venv/bin/python cli/main.py login credentials <bundle.json>` | Set username/password for a registered profile |
 | `.venv/bin/python cli/main.py login validate <bundle.json>` | Wait for profile to become HEALTHY |
 | `.venv/bin/python cli/main.py login import <session_id>` | Convenience: export + review + register |
 | `.venv/bin/python cli/main.py login import <session_id> --validate` | Convenience: export + review + register + validate |
-| `.venv/bin/python cli/main.py tabby session ensure` | Start or verify a live browser session worker |
+| `.venv/bin/python cli/main.py tabby session ensure --profile <id>` | Start or verify a live browser session worker |
 | `.venv/bin/python cli/main.py tabby session status` | Show current browser session state |
 
 ---
@@ -260,4 +292,6 @@ Start
 | App or Login process missing in extension | Confirm Step 2 ran successfully; check backend is running |
 | Low selector confidence in review | Re-record; interact with fields one at a time with visible focus |
 | Validate timeout (60s) | Check Tabby logs; verify the keepalive URL returns HTTP 200 when authenticated |
+| `Credentials not found for k8s:secret/...` | Run `login credentials <bundle.json>` to set username/password |
+| `TRANSIENT_FAIL` on health check | The site may be rate-limiting (429) the `url_check`. Update the app's keepalive config in Tabby to use a `dom_check` on `body` instead via `PUT /apps/{app_id}` |
 | Keepalive URL is redirect-only | Find a URL that loads authenticated content, not a redirect chain |

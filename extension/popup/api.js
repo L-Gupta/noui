@@ -338,7 +338,7 @@ export const getLoginBundle = (id) => api("GET", `/login-sessions/${id}/bundle`)
 export function startLoginRecording({ captureSessionId, projectId, processId }) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
-      { type: "SET_LOGIN_RECORDING_STATE", captureSessionId, projectId, processId },
+      { type: "START_LOGIN_RECORDING_SESSION", captureSessionId, projectId, processId },
       (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
@@ -350,10 +350,10 @@ export function startLoginRecording({ captureSessionId, projectId, processId }) 
   });
 }
 
-export function stopLoginRecording() {
+export function stopLoginRecording({ captureSessionId } = {}) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage(
-      { type: "CLEAR_LOGIN_RECORDING_STATE" },
+      { type: "STOP_LOGIN_RECORDING_SESSION", captureSessionId },
       (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));

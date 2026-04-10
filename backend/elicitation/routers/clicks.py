@@ -8,16 +8,27 @@ from backend.elicitation.database import get_db
 from backend.elicitation.schemas import ClickEventCreate, ClickEventOut
 from backend.elicitation.timeline_utils import emit_timeline_event
 from backend.shared.models import ClickEvent
+from backend.shared.session_resolution import resolve_domain_session
 
 router = APIRouter(prefix="/clicks", tags=["clicks"])
 
 
 @router.post("", response_model=ClickEventOut, status_code=201)
 async def create_click(data: ClickEventCreate, db: AsyncSession = Depends(get_db)):
+    # Resolve domain session (login/workflow) from capture_session_id
+    session_id = None
+    session_type = None
+    if data.capture_session_id:
+        resolved = await resolve_domain_session(data.capture_session_id, db)
+        if resolved:
+            session_id, session_type = resolved
+
     click = ClickEvent(
         project_id=data.project_id,
         process_id=data.process_id,
         capture_session_id=data.capture_session_id,
+        session_id=session_id,
+        session_type=session_type,
         event_type=data.event_type,
         url=data.url,
         tag_name=data.tag_name,
@@ -31,6 +42,13 @@ async def create_click(data: ClickEventCreate, db: AsyncSession = Depends(get_db
         input_type=data.input_type,
         value=data.value,
         field_name=data.field_name,
+        field_role=data.field_role,
+        is_redacted=data.is_redacted,
+        autocomplete=data.autocomplete,
+        placeholder=data.placeholder,
+        aria_label=data.aria_label,
+        role_attr=data.role_attr,
+        data_attrs_json=data.data_attrs_json,
     )
     if data.timestamp:
         click.timestamp = data.timestamp
