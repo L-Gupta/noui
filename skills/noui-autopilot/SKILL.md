@@ -498,6 +498,71 @@ For sites like Expedia, Salesforce, HubSpot, or any React/Vue SPA:
 4. **Select from autocomplete/dropdown:** After typing with `cdp_type`, wait 1-2s, then use `cdp_press_key key=ArrowDown` + `cdp_press_key key=Enter` to select from suggestions. Or use `cdp_get_accessibility_tree` to find the suggestion items and `cdp_click` on them.
 5. **Navigate date pickers:** `cdp_click` to open, `cdp_click` on month/year arrows, `cdp_click` on the target day.
 6. **Keys:** Use `cdp_press_key` instead of `press_key` when standard `press_key` fails.
+7. **Scroll to discover more:** If `get_page_summary` shows `total > returned`, use `scroll_page direction=down` then re-query to find more elements.
+
+---
+
+### Scroll Commands
+
+These commands let you scroll the page or specific containers to discover offscreen elements, trigger lazy loading, and navigate long pages.
+
+---
+
+#### `scroll_page`
+**Params:** `direction` (required: `up`, `down`, `left`, `right`), `amount` (optional: `page` (default), `half`, or pixel count)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down`
+**CLI (half page):** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down amount=half`
+**CLI (pixels):** `.venv/bin/python cli/main.py autopilot browser scroll_page direction=down amount=300`
+**Behavior:** Dispatches a native mouse wheel event at viewport center via CDP. Triggers infinite-scroll listeners and lazy-load observers. Waits 350ms for content to settle.
+**Response:** `{ scrolled: true, direction, deltaX, deltaY, scrollX, scrollY, scrollWidth, scrollHeight, atTop, atBottom }`
+
+**When to use:** Scrolling the main page to reveal more content, trigger lazy loading, or navigate search results. Check `atBottom: true` to know you've reached the end.
+
+---
+
+#### `scroll_element`
+**Params:** `selector` (required: CSS selector for scrollable container), `direction` (required: `up`, `down`, `left`, `right`), `amount` (optional: `page` (default), `half`, or pixel count)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_element selector=.results-list direction=down`
+**Behavior:** Finds the container (piercing shadow DOM), calls `scrollBy()`, dispatches a scroll event for lazy-load listeners.
+**Response:** `{ scrolled: true, selector, direction, scrollTop, scrollLeft, scrollHeight, scrollWidth, clientHeight, clientWidth }` or `{ scrolled: false, error: string }`
+
+**When to use:** Scrolling within sidebars, modal bodies, dropdown lists, chat panels, or any scrollable container that isn't the main page. Compare `scrollTop + clientHeight` vs `scrollHeight` to know if you've reached the bottom.
+
+---
+
+#### `scroll_to_element`
+**Params:** `selector` (required: CSS selector), `block` (optional: `center` (default), `start`, `end`, `nearest`)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser scroll_to_element selector=#submit-btn`
+**Behavior:** Finds the element (piercing shadow DOM) and scrolls it into view. Returns the element's bounding rect after scroll.
+**Response:** `{ scrolled: true, selector, tagName, text, rect: { x, y, width, height } }` or `{ scrolled: false, error: string }`
+
+**When to use:** When you know the selector of an offscreen element and want to bring it into view before interacting with it.
+
+---
+
+### Handling Long Pages and Scrollable Containers
+
+**Long pages / search results:**
+1. Run `get_page_summary` — check if `total > returned` (elements were cut off)
+2. `scroll_page direction=down` to reveal more content
+3. Wait 1-2s for lazy-loaded content to appear
+4. Run `get_page_summary` again to see the new elements
+5. Repeat until you find what you need or `atBottom` is true
+
+**Infinite scroll (e.g. social feeds, search results):**
+1. `scroll_page direction=down` — this triggers scroll event listeners that load more content
+2. Wait 2-3s for new items to load
+3. `get_page_summary` to check for new elements
+4. Repeat as needed — stop when no new elements appear or you find what you need
+
+**Scrollable containers (sidebars, modals, dropdowns):**
+1. Identify the container selector (use `query_elements` or `cdp_get_accessibility_tree`)
+2. `scroll_element selector=<container> direction=down`
+3. Re-query elements in the container to see what appeared
+4. Check `scrollTop + clientHeight >= scrollHeight` to know if you've reached the bottom
+
+**Known element offscreen:**
+- Use `scroll_to_element selector=<target>` to bring it into view, then interact with it
 
 ---
 
@@ -559,6 +624,9 @@ Start
 | `eval_js` returns CSP error | Use `cdp_click`, `cdp_type`, `cdp_press_key` instead — CDP commands bypass CSP |
 | Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
 | Chrome shows "debugging" banner | Normal — CDP commands require the debugger API. The banner disappears when commands stop |
+| Element exists but not in `get_page_summary` | It may be offscreen — use `scroll_page direction=down` and re-query, or `scroll_to_element` if you know the selector |
+| Infinite scroll page doesn't load more items | Use `scroll_page` (CDP wheel events) instead of keyboard-based scrolling — it triggers scroll event listeners |
+| Can't scroll inside a modal/sidebar | Use `scroll_element selector=<container>` targeting the scrollable container, not `scroll_page` |
 | Extension reloaded mid-capture, HAR lost | Capture is dead. Run `autopilot stop-capture`, then `autopilot resume-capture <wf_id>` to start a fresh capture on the same workflow |
 | `verify-extension` shows UNSUPPORTED commands | Extension is stale. Reload it in `chrome://extensions`, then re-run `verify-extension` |
 

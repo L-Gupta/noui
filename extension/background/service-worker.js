@@ -1790,6 +1790,167 @@ const _commandHandlers = {
 
     return { pressed: true, key, modifiers: mod };
   },
+
+  // ── Scroll commands ─────────────────────────────────────────────────────
+
+  scroll_page: async ({ direction, amount }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    // Get viewport size and current scroll position
+    const [info] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+      }),
+    });
+    const { vw, vh } = info.result;
+
+    // Calculate pixel delta
+    let pixels;
+    if (typeof amount === "number") {
+      pixels = amount;
+    } else if (amount === "half") {
+      pixels = Math.round((direction === "left" || direction === "right" ? vw : vh) / 2);
+    } else {
+      // default: "page"
+      pixels = direction === "left" || direction === "right" ? vw : vh;
+    }
+
+    const deltaX = direction === "right" ? pixels : direction === "left" ? -pixels : 0;
+    const deltaY = direction === "down" ? pixels : direction === "up" ? -pixels : 0;
+
+    // Move mouse to viewport center, then dispatch wheel event via CDP
+    const cx = Math.round(vw / 2);
+    const cy = Math.round(vh / 2);
+
+    await cdpSend(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved", x: cx, y: cy,
+    });
+    await cdpSend(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseWheel", x: cx, y: cy, deltaX, deltaY,
+    });
+
+    // Wait for scroll to settle and lazy-load to trigger
+    await new Promise((r) => setTimeout(r, 350));
+
+    // Get new scroll position
+    const [after] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+        atTop: window.scrollY === 0,
+        atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
+      }),
+    });
+
+    return { scrolled: true, direction, deltaX, deltaY, ...after.result };
+  },
+
+  scroll_element: async ({ selector, direction, amount }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (sel, dir, amt) => {
+        function deepQuery(root, s) {
+          const el = root.querySelector(s);
+          if (el) return el;
+          for (const node of root.querySelectorAll("*")) {
+            if (node.shadowRoot) {
+              const found = deepQuery(node.shadowRoot, s);
+              if (found) return found;
+            }
+          }
+          return null;
+        }
+
+        const el = deepQuery(document, sel);
+        if (!el) return { scrolled: false, error: `No element found for selector: ${sel}` };
+
+        const isHorizontal = dir === "left" || dir === "right";
+        const containerSize = isHorizontal ? el.clientWidth : el.clientHeight;
+
+        let pixels;
+        if (typeof amt === "number") {
+          pixels = amt;
+        } else if (amt === "half") {
+          pixels = Math.round(containerSize / 2);
+        } else {
+          pixels = containerSize; // default: "page"
+        }
+
+        const top = dir === "down" ? pixels : dir === "up" ? -pixels : 0;
+        const left = dir === "right" ? pixels : dir === "left" ? -pixels : 0;
+
+        el.scrollBy({ top, left, behavior: "smooth" });
+        el.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+        return {
+          scrolled: true,
+          selector: sel,
+          direction: dir,
+          scrollTop: el.scrollTop,
+          scrollLeft: el.scrollLeft,
+          scrollHeight: el.scrollHeight,
+          scrollWidth: el.scrollWidth,
+          clientHeight: el.clientHeight,
+          clientWidth: el.clientWidth,
+        };
+      },
+      args: [selector, direction, amount],
+    });
+
+    return result.result;
+  },
+
+  scroll_to_element: async ({ selector, block }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (sel, blk) => {
+        function deepQuery(root, s) {
+          const el = root.querySelector(s);
+          if (el) return el;
+          for (const node of root.querySelectorAll("*")) {
+            if (node.shadowRoot) {
+              const found = deepQuery(node.shadowRoot, s);
+              if (found) return found;
+            }
+          }
+          return null;
+        }
+
+        const el = deepQuery(document, sel);
+        if (!el) return { scrolled: false, error: `No element found for selector: ${sel}` };
+
+        el.scrollIntoView({ block: blk || "center", inline: "nearest", behavior: "smooth" });
+
+        const rect = el.getBoundingClientRect();
+        return {
+          scrolled: true,
+          selector: sel,
+          tagName: el.tagName.toLowerCase(),
+          text: (el.textContent || "").trim().slice(0, 100),
+          rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+        };
+      },
+      args: [selector, block || "center"],
+    });
+
+    return result.result;
+  },
 };
 
 // Start polling when service worker loads
