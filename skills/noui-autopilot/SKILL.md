@@ -18,8 +18,7 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 - **YOU are the browser agent.** Do not call any external AI API. You read page state, decide what to do, and execute browser commands yourself.
 - **ALWAYS** start the backend before doing anything else.
 - **NEVER** type raw passwords into chat output or logs. When you type credentials into the browser, use the browser command — the value goes to the extension, not to the conversation.
-- **ALWAYS** call `get_page_summary` (or `cdp_get_accessibility_tree` for complex SPAs) before clicking or typing to understand what elements are available.
-- **PREFER CDP commands** (`cdp_click`, `cdp_type`, `cdp_press_key`) over standard commands on React/Vue/Angular sites, custom components, and any page where standard commands fail.
+- **ALWAYS** call `get_page_summary` before clicking or typing to understand what elements are available.
 - **NEVER** click Send, Submit, Pay, Delete, Publish, or Invite buttons unless the user explicitly allowed that side effect.
 - **ALWAYS** stop capture before exporting MCP.
 - **NEVER** skip capture validation — if no API calls were recorded, do not export an empty MCP.
@@ -208,8 +207,15 @@ Strategy:
 1. Click the date field to open the picker
 2. `get_page_summary` or `query_elements` to find the picker's navigation (month/year arrows, day cells)
 3. Navigate month-by-month using the arrow buttons if needed
-4. `click_by_text "<day number>"` or `click_element selector="[data-date='2025-01-15']"` for the target date
+4. Click the target date using one of these approaches (in priority order):
+   - `click_element` with the unique selector returned by `query_elements` — selectors are now unique and directly usable
+   - `click_at x=<center_x> y=<center_y>` using the `rect` from `query_elements` (compute center: `x + width/2`, `y + height/2`) — best for grids where cells lack unique attributes
+   - `click_by_text "<day number>"` — only works if day cells are buttons/links
+   - `click_element selector="[data-date='2025-01-15']"` — if the picker uses data attributes
 5. If the picker has separate fields (month dropdown, day dropdown, year dropdown), treat each as its own interaction
+6. When closing the picker, use `click_by_text "Done" exact=true` to avoid matching skip-navigation links
+
+**Important:** If clicking a calendar cell (`td`) has no effect, click the **inner interactive element** instead (e.g., `div.uitk-day-button`, `span`, `[role='gridcell']`). The container element may not handle click events — the actual click target is often a child element.
 
 Fallback: Try `type_text` directly into the date input with the expected format (e.g., `01/15/2025`, `2025-01-15`) — some pickers accept typed input even if they show a widget.
 
@@ -245,12 +251,18 @@ Use sparingly — screenshots are heavier than text queries.
 
 When an action fails, follow this escalation sequence:
 
+### `click_by_text` matches wrong element
+
+1. Use `exact=true` for an exact text match: `click_by_text "Done" exact=true`
+2. Note: elements smaller than 10x10px (e.g., skip-navigation links) are automatically filtered out
+
 ### `click_by_text` fails ("not found")
 
 1. Run `get_page_summary` to see the exact text of all visible elements
 2. Try with a shorter or different substring (`click_by_text` uses case-insensitive partial match)
-3. Try `click_element` with a CSS selector from the summary
-4. If still failing, the element may be in shadow DOM or an iframe — use `query_elements` with broader selectors or `take_screenshot`
+3. Try `click_element` with a CSS selector from the summary — selectors from `query_elements` and `get_page_summary` are unique and can be used directly
+4. Try `click_at` with coordinates from `query_elements` rect output
+5. If still failing, the element may be in shadow DOM or an iframe — use `query_elements` with broader selectors or `take_screenshot`
 
 ### `type_into_label` fails ("not found")
 
@@ -260,9 +272,11 @@ When an action fails, follow this escalation sequence:
 
 ### Element exists but click has no effect
 
-1. The element might need a different event — try `eval_js code="document.querySelector('<selector>').click()"`
-2. The element might be behind an overlay — check for modals with `query_elements selector="[role='dialog'], .modal, .overlay"`
-3. Take a screenshot to see what is blocking interaction
+1. Try clicking the **inner interactive element** instead — container elements (e.g., `td`, `div`) may not handle click events; the actual target is often a child (e.g., `div.day-button`, `span`, `[role='gridcell']`)
+2. Try `click_at` with the element's center coordinates from `query_elements` rect — this bypasses selector issues entirely
+3. The element might need a different event — try `eval_js code="document.querySelector('<selector>').click()"`
+4. The element might be behind an overlay — check for modals with `query_elements selector="[role='dialog'], .modal, .overlay"`
+5. Take a screenshot to see what is blocking interaction
 
 ### Page seems stuck / not updating after action
 
@@ -336,8 +350,8 @@ They proxy to `POST http://localhost:8002/browser-commands/execute` with body `{
 
 #### `get_page_summary`
 **Params:** none
-**Response:** `{ url: string, title: string, total: number, inViewport: number, returned: number (max 200), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, inViewport, selector }] }`
-Returns visible interactive elements from all frames (main page + iframes), piercing shadow DOM. Elements in the viewport are listed first. Up to 200 elements returned. Hidden elements (`display:none`, `visibility:hidden`, 0x0 rect) are filtered out. For complex pages where this still misses elements, use `cdp_get_accessibility_tree`.
+**Response:** `{ url: string, title: string, total: number, returned: number (max 60), elements: [{ index, tagName, type, id, name, text (max 100 chars), placeholder, ariaLabel, href, disabled, selector }] }`
+Returns all visible interactive elements (`a, button, input, select, textarea, [role="button|link|tab|menuitem"]`). Hidden elements (0x0 rect) are filtered out. **Selectors are unique** and can be passed directly to `click_element`. Use this to understand what is on the page before acting.
 
 ---
 
@@ -352,13 +366,23 @@ Returns visible interactive elements from all frames (main page + iframes), pier
 **Params:** `selector` (required, CSS selector string)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser click_element selector=#my-btn`
 **Response:** `{ clicked: true, tagName: string, id: string|null, textContent: string (max 100) }` or `{ clicked: false, error: string }`
+**Tip:** Selectors from `query_elements` and `get_page_summary` are unique and can be passed directly to this command.
+
+---
+
+#### `click_at`
+**Params:** `x` (required, number), `y` (required, number) — coordinates from `query_elements` rect output (compute center: `rect.x + rect.width/2`, `rect.y + rect.height/2`)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_at x=533 y=1741` or `click_at 533 1741`
+**Behavior:** Finds the element at the given coordinates and clicks it. Handles out-of-viewport elements by scrolling them into view first. Falls back to brute-force element search if `elementFromPoint` fails.
+**Response:** `{ clicked: true, tagName: string, id: string|null, textContent: string (max 100), x: number, y: number, method: string }` or `{ clicked: false, error: string }`
+**Use case:** Best for custom widgets (date pickers, calendar grids, canvas UIs) where elements lack unique CSS selectors or data attributes.
 
 ---
 
 #### `click_by_text`
-**Params:** `text` (required, string — case-insensitive partial match)
-**CLI:** `.venv/bin/python cli/main.py autopilot browser click_by_text "Sign In"`
-**Searches:** `a, button, [role="button"], input[type="submit"], input[type="button"]` — only visible elements.
+**Params:** `text` (required, string — case-insensitive partial match), `exact` (optional, bool, default false — when true, matches full trimmed text instead of substring)
+**CLI:** `.venv/bin/python cli/main.py autopilot browser click_by_text "Sign In"` or `click_by_text "Done" exact=true`
+**Searches:** `a, button, [role="button"], input[type="submit"], input[type="button"]` — only visible elements (minimum 10x10px, skip-navigation links are filtered out).
 **Response:** `{ clicked: true, tagName: string, text: string }` or `{ clicked: false, error: string }`
 
 ---
@@ -366,8 +390,8 @@ Returns visible interactive elements from all frames (main page + iframes), pier
 #### `type_text`
 **Params:** `selector` (required), `text` (required), `clearFirst` (optional, bool, default `true`)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser type_text selector=#email text=user@example.com`
-**Behavior:** Focuses the element, optionally clears it, sets value via React-compatible native setter, dispatches `input` + `change` events. Supports `contenteditable` elements. For autocomplete fields or complex inputs, prefer `cdp_type` instead.
-**Response:** `{ typed: true, tagName: string, id: string|null, finalValue: string (max 200), method: string }` or `{ typed: false, error: string }`
+**Behavior:** Focuses the element, optionally clears it, sets `.value`, dispatches `input` + `change` events.
+**Response:** `{ typed: true, tagName: string, id: string|null, finalValue: string (max 200) }` or `{ typed: false, error: string }`
 
 ---
 
@@ -412,7 +436,7 @@ Returns visible interactive elements from all frames (main page + iframes), pier
 **Params:** `selector` (required, CSS selector), `includeText` (optional, bool, default `true`), `maxResults` (optional, number, default 20)
 **CLI:** `.venv/bin/python cli/main.py autopilot browser query_elements selector="input, button"`
 **Response:** `{ count: number (total matched), returned: number, elements: [{ index, tagName, id, className, type, name, href, value (max 200), placeholder, disabled, visible, rect: {x,y,width,height}, selector, textContent? (max 200) }] }`
-Use this for precise element discovery when `get_page_summary` is not enough.
+Use this for precise element discovery when `get_page_summary` is not enough. **Selectors are unique** — each returned `selector` value can be passed directly to `click_element` to target that exact element. The `rect` coordinates can also be used with `click_at` (compute center: `rect.x + rect.width/2`, `rect.y + rect.height/2`).
 
 ---
 
@@ -488,20 +512,6 @@ A "debugging" banner will appear in Chrome when CDP commands are first used — 
 
 ---
 
-### Recommended Command Strategy for Modern SPAs
-
-For sites like Expedia, Salesforce, HubSpot, or any React/Vue SPA:
-
-1. **Read the page:** Start with `get_page_summary`. If it shows too few elements or misses expected UI, use `cdp_get_accessibility_tree` instead.
-2. **Click:** Use `cdp_click` (not `click_element`). It fires real mouse events that all frameworks respond to.
-3. **Type:** Use `cdp_type` (not `type_text`). Character-by-character typing triggers autocomplete, search-as-you-type, and React state updates.
-4. **Select from autocomplete/dropdown:** After typing with `cdp_type`, wait 1-2s, then use `cdp_press_key key=ArrowDown` + `cdp_press_key key=Enter` to select from suggestions. Or use `cdp_get_accessibility_tree` to find the suggestion items and `cdp_click` on them.
-5. **Navigate date pickers:** `cdp_click` to open, `cdp_click` on month/year arrows, `cdp_click` on the target day.
-6. **Keys:** Use `cdp_press_key` instead of `press_key` when standard `press_key` fails.
-7. **Scroll to discover more:** If `get_page_summary` shows `total > returned`, use `scroll_page direction=down` then re-query to find more elements.
-
----
-
 ### Scroll Commands
 
 These commands let you scroll the page or specific containers to discover offscreen elements, trigger lazy loading, and navigate long pages.
@@ -537,6 +547,20 @@ These commands let you scroll the page or specific containers to discover offscr
 **Response:** `{ scrolled: true, selector, tagName, text, rect: { x, y, width, height } }` or `{ scrolled: false, error: string }`
 
 **When to use:** When you know the selector of an offscreen element and want to bring it into view before interacting with it.
+
+---
+
+### Recommended Command Strategy for Modern SPAs
+
+For sites like Expedia, Salesforce, HubSpot, or any React/Vue SPA:
+
+1. **Read the page:** Start with `get_page_summary`. If it shows too few elements or misses expected UI, use `cdp_get_accessibility_tree` instead.
+2. **Click:** Use `cdp_click` or `click_at` for reliable clicking. They fire real mouse events that all frameworks respond to.
+3. **Type:** Use `cdp_type` (not `type_text`). Character-by-character typing triggers autocomplete, search-as-you-type, and React state updates.
+4. **Select from autocomplete/dropdown:** After typing with `cdp_type`, wait 1-2s, then use `cdp_press_key key=ArrowDown` + `cdp_press_key key=Enter` to select from suggestions. Or use `cdp_get_accessibility_tree` to find the suggestion items and `cdp_click` on them.
+5. **Navigate date pickers:** `cdp_click` to open, `cdp_click` on month/year arrows, `cdp_click` on the target day. Or use `click_at` with coordinates from `query_elements`.
+6. **Keys:** Use `cdp_press_key` instead of `press_key` when standard `press_key` fails.
+7. **Scroll to discover more:** If `get_page_summary` shows `total > returned`, use `scroll_page direction=down` then re-query to find more elements.
 
 ---
 
@@ -615,14 +639,16 @@ Start
 | HAR file not found after stop | Extension may not have uploaded — wait longer, check `workflow captures` |
 | 0 tools after export | The workflow only recorded HTML pages, not API calls — the site may use server-side rendering |
 | Login redirect loop | The session cookie may not persist — check if the extension is on the same tab |
-| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, or use `cdp_get_accessibility_tree` to find elements by role/name. Use `cdp_click` with selector instead |
-| `click_element` doesn't work on React/Vue site | Use `cdp_click` instead — it fires OS-level mouse events that all frameworks respond to |
-| Autocomplete dropdown not visible in `get_page_summary` | Use `cdp_get_accessibility_tree` to find dropdown items by role, or `cdp_press_key key=ArrowDown` + `key=Enter` to select |
-| `type_text` doesn't trigger autocomplete suggestions | Use `cdp_type` instead — it types character-by-character, triggering keystroke handlers and search-as-you-type |
-| Date picker not responding to `type_text` | Use `cdp_click` to open the picker, then navigate using `cdp_click` on the picker's UI controls |
-| `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Use `cdp_click` to open it, then `cdp_get_accessibility_tree` to find options, then `cdp_click` to select |
-| `eval_js` returns CSP error | Use `cdp_click`, `cdp_type`, `cdp_press_key` instead — CDP commands bypass CSP |
+| `click_by_text` says "not found" | Run `get_page_summary` to see exact element text, use `click_element` with unique selector or `click_at` with coordinates |
+| `click_by_text` matched wrong element | Use `exact=true` for exact text matching: `click_by_text "Done" exact=true` |
+| Calendar/grid cells have no unique selectors | Use `query_elements` — selectors are now unique. Or use `click_at` with rect coordinates |
+| Autocomplete dropdown not visible in `get_page_summary` | Use `query_elements` with `[role="option"]` or `[role="listbox"]` selectors, or `take_screenshot` to see the dropdown |
+| Date picker not responding to `type_text` | Click the date field first to open the picker, then navigate using the picker's UI controls |
+| `select_option` fails on a dropdown | The dropdown is likely a custom widget, not a `<select>`. Click it to open, then `click_by_text` on the desired option |
+| `eval_js` returns CSP error | Use `click_element`, `type_text`, `press_key` instead — these go through the extension content script |
 | Page content not updating after click | SPA transition in progress — use `wait_for_selector` or wait 2-3s and re-check with `get_page_summary` |
+| `click_element` doesn't work on React/Vue site | Use `cdp_click` or `click_at` instead — they fire OS-level mouse events that all frameworks respond to |
+| `type_text` doesn't trigger autocomplete suggestions | Use `cdp_type` instead — it types character-by-character, triggering keystroke handlers and search-as-you-type |
 | Chrome shows "debugging" banner | Normal — CDP commands require the debugger API. The banner disappears when commands stop |
 | Element exists but not in `get_page_summary` | It may be offscreen — use `scroll_page direction=down` and re-query, or `scroll_to_element` if you know the selector |
 | Infinite scroll page doesn't load more items | Use `scroll_page` (CDP wheel events) instead of keyboard-based scrolling — it triggers scroll event listeners |

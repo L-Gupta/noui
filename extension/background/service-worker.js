@@ -1092,6 +1092,30 @@ const _commandHandlers = {
           }
           return results;
         }
+        function uniqueSelector(el) {
+          if (el.id) return '#' + CSS.escape(el.id);
+          const parts = [];
+          let cur = el;
+          while (cur && cur !== document.body && cur !== document.documentElement) {
+            let seg = cur.tagName.toLowerCase();
+            if (cur.id) {
+              parts.unshift('#' + CSS.escape(cur.id));
+              break;
+            }
+            const parent = cur.parentElement;
+            if (parent) {
+              const siblings = [...parent.children].filter(c => c.tagName === cur.tagName);
+              if (siblings.length > 1) {
+                seg += ':nth-of-type(' + (siblings.indexOf(cur) + 1) + ')';
+              }
+            }
+            parts.unshift(seg);
+            cur = cur.parentElement;
+            const candidate = parts.join(' > ');
+            try { if (document.querySelectorAll(candidate).length === 1) break; } catch(e) { /* ignore */ }
+          }
+          return parts.join(' > ');
+        }
         const els = deepQueryAll(document, sel);
         const out = [];
         const limit = Math.min(els.length, maxRes || 20);
@@ -1114,18 +1138,10 @@ const _commandHandlers = {
               x: Math.round(rect.x), y: Math.round(rect.y),
               width: Math.round(rect.width), height: Math.round(rect.height),
             },
+            selector: uniqueSelector(el),
           };
           if (inclText) {
             entry.textContent = (el.textContent || "").trim().slice(0, 200);
-          }
-          if (el.id) {
-            entry.selector = `#${el.id}`;
-          } else {
-            let s = el.tagName.toLowerCase();
-            if (el.className && typeof el.className === "string") {
-              s += "." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
-            }
-            entry.selector = s;
           }
           out.push(entry);
         }
@@ -1155,6 +1171,80 @@ const _commandHandlers = {
         };
       },
       args: [selector],
+    });
+
+    return result.result;
+  },
+
+  click_at: async ({ x, y }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (targetX, targetY) => {
+        // Step 1: Try elementFromPoint directly (works if point is in viewport)
+        let el = document.elementFromPoint(targetX, targetY);
+        if (el) {
+          el.click();
+          return {
+            clicked: true, tagName: el.tagName.toLowerCase(),
+            id: el.id || null, textContent: (el.textContent || "").trim().slice(0, 100),
+            x: targetX, y: targetY, method: "elementFromPoint",
+          };
+        }
+
+        // Step 2: Point is outside viewport — scroll to center it, then retry
+        const vpH = window.innerHeight;
+        window.scrollTo(0, targetY - vpH / 2);
+        // After scroll, the viewport-relative Y changes
+        const adjustedY = targetY - window.scrollY;
+        el = document.elementFromPoint(targetX, adjustedY);
+        if (el) {
+          el.click();
+          return {
+            clicked: true, tagName: el.tagName.toLowerCase(),
+            id: el.id || null, textContent: (el.textContent || "").trim().slice(0, 100),
+            x: targetX, y: targetY, method: "scroll+elementFromPoint",
+          };
+        }
+
+        // Step 3: Brute-force — find deepest element whose bounding rect contains (targetX, targetY)
+        // targetX/targetY are the original viewport-relative coords from query_elements
+        // We need to account for scroll: the element's absolute position = rect + scroll
+        const scrollX = window.scrollX, scrollY = window.scrollY;
+        let best = null;
+        let bestArea = Infinity;
+        for (const candidate of document.querySelectorAll("*")) {
+          const r = candidate.getBoundingClientRect();
+          const absX = r.x + scrollX, absY = r.y + scrollY;
+          // Check if the original (pre-scroll) absolute point falls within this element
+          // The original absolute point: targetX + original scrollX, targetY + original scrollY
+          // But we don't know original scrollX/Y. The coords from query_elements were viewport-relative
+          // at the time of that call. We'll check against current rect in viewport coords after scroll.
+          if (r.width > 0 && r.height > 0 &&
+              targetX >= absX && targetX <= absX + r.width &&
+              targetY >= absY && targetY <= absY + r.height) {
+            const area = r.width * r.height;
+            if (area < bestArea) {
+              bestArea = area;
+              best = candidate;
+            }
+          }
+        }
+        if (best) {
+          best.scrollIntoView({ block: "center" });
+          best.click();
+          return {
+            clicked: true, tagName: best.tagName.toLowerCase(),
+            id: best.id || null, textContent: (best.textContent || "").trim().slice(0, 100),
+            x: targetX, y: targetY, method: "brute-force",
+          };
+        }
+
+        return { clicked: false, error: `No element found at coordinates (${targetX}, ${targetY})` };
+      },
+      args: [parseFloat(x), parseFloat(y)],
     });
 
     return result.result;
@@ -1364,13 +1454,28 @@ const _commandHandlers = {
         const out = [];
 
         function buildSelector(el) {
-          if (el.id) return `#${el.id}`;
-          if (el.name) return `${el.tagName.toLowerCase()}[name="${el.name}"]`;
-          let s = el.tagName.toLowerCase();
-          if (el.className && typeof el.className === "string") {
-            s += "." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
+          if (el.id) return '#' + CSS.escape(el.id);
+          const parts = [];
+          let cur = el;
+          while (cur && cur !== document.body && cur !== document.documentElement) {
+            let seg = cur.tagName.toLowerCase();
+            if (cur.id) {
+              parts.unshift('#' + CSS.escape(cur.id));
+              break;
+            }
+            const parent = cur.parentElement;
+            if (parent) {
+              const siblings = [...parent.children].filter(c => c.tagName === cur.tagName);
+              if (siblings.length > 1) {
+                seg += ':nth-of-type(' + (siblings.indexOf(cur) + 1) + ')';
+              }
+            }
+            parts.unshift(seg);
+            cur = cur.parentElement;
+            const candidate = parts.join(' > ');
+            try { if (document.querySelectorAll(candidate).length === 1) break; } catch(e) { /* ignore */ }
           }
-          return s;
+          return parts.join(' > ');
         }
 
         for (let i = 0; i < limit; i++) {
@@ -1424,13 +1529,13 @@ const _commandHandlers = {
     };
   },
 
-  click_by_text: async ({ text }) => {
+  click_by_text: async ({ text, exact }) => {
     const tabId = await getActiveTabId();
     if (!tabId) throw new Error("No active tab found");
 
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (searchText) => {
+      func: (searchText, exactMatch) => {
         function deepQueryAll(root, sel) {
           let results = [...root.querySelectorAll(sel)];
           for (const el of root.querySelectorAll("*")) {
@@ -1443,14 +1548,17 @@ const _commandHandlers = {
         for (const el of all) {
           const elText = (el.textContent || el.value || "").trim().toLowerCase();
           const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
-          if ((elText.includes(lower) || ariaLabel.includes(lower)) && el.offsetParent !== null) {
+          const textMatch = exactMatch ? elText === lower : elText.includes(lower);
+          const ariaMatch = exactMatch ? ariaLabel === lower : ariaLabel.includes(lower);
+          const rect = el.getBoundingClientRect();
+          if ((textMatch || ariaMatch) && el.offsetParent !== null && rect.width >= 10 && rect.height >= 10) {
             el.click();
             return { clicked: true, tagName: el.tagName.toLowerCase(), text: (el.textContent || el.value || "").trim().slice(0, 100) };
           }
         }
         return { clicked: false, error: "No visible element found with text: " + searchText };
       },
-      args: [text],
+      args: [text, !!exact],
     });
 
     return result.result;
