@@ -538,17 +538,23 @@ const handlers = {
     captureState = { projectId, processId, captureSessionId };
     _persistCaptureState();
 
-    // 2. Inject click tracker
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content/click-tracker.js"] });
+    // 2. Start HAR capture (must happen before click tracker — executeScript
+    //    can throw on restricted pages like chrome:// or about:blank, and we
+    //    must not let that prevent HAR recording from starting)
+    harState = { tabId, requestMap: {}, captureSessionId };
+    _persistHarMeta();
 
     // 3. Start URL monitoring
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     urlMonitoringState = { projectId, processId, captureSessionId, lastUrl: tab?.url || "" };
     chrome.storage.session.set({ urlMonitoringState });
 
-    // 4. Start HAR capture
-    harState = { tabId, requestMap: {}, captureSessionId };
-    _persistHarMeta();
+    // 4. Inject click tracker (best-effort — may fail on restricted pages)
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content/click-tracker.js"] });
+    } catch (e) {
+      console.warn("[Autopilot] Click tracker injection failed (will retry on navigate):", e.message);
+    }
 
     console.log("[Autopilot] Capture session started:", captureSessionId);
     return { status: "started", tabId, captureSessionId };
@@ -598,12 +604,17 @@ const handlers = {
     loginRecordingState = { captureSessionId, projectId, processId };
     chrome.storage.session.set({ loginRecordingState });
 
-    // 2. Inject login recorder (NOT click tracker — login recorder handles sensitive fields)
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content/login-recorder.js"] });
-
-    // 3. Start HAR capture
+    // 2. Start HAR capture (must happen before script injection — executeScript
+    //    can throw on restricted pages, and HAR recording is critical)
     harState = { tabId, requestMap: {}, captureSessionId };
     _persistHarMeta();
+
+    // 3. Inject login recorder (best-effort — may fail on restricted pages)
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content/login-recorder.js"] });
+    } catch (e) {
+      console.warn("[Autopilot] Login recorder injection failed (will retry on navigate):", e.message);
+    }
 
     console.log("[Autopilot] Login recording session started:", captureSessionId);
     return { status: "started", tabId, captureSessionId };
@@ -910,6 +921,16 @@ chrome.webNavigation.onCompleted.addListener((details) => {
     console.warn("[URL Monitor] Failed to record URL change:", err.message);
   });
 
+  // Re-inject click tracker on navigation when capture is active
+  if (captureState && harState && details.tabId === harState.tabId) {
+    setTimeout(() => {
+      if (!captureState) return;
+      chrome.scripting.executeScript({ target: { tabId: details.tabId }, files: ["content/click-tracker.js"] })
+        .then(() => console.log("[Autopilot] Click tracker re-injected after navigation"))
+        .catch((e) => console.warn("[Autopilot] Failed to re-inject click tracker:", e.message));
+    }, 500);
+  }
+
   // Re-inject voice recognizer on navigation when narration capture is active
   if (narrationCaptureState?.active && details.tabId === narrationCaptureState.tabId) {
     setTimeout(() => {
@@ -918,6 +939,46 @@ chrome.webNavigation.onCompleted.addListener((details) => {
         .then(() => console.log("[Narration] Voice recognizer re-injected after navigation"))
         .catch((e) => console.warn("[Narration] Failed to re-inject after navigation:", e.message));
     }, 1000);
+  }
+});
+
+// ── CDP (Chrome DevTools Protocol) Session Manager ────────────────────────
+// Uses chrome.debugger to send OS-level input events that work with React,
+// Vue, Angular, and any framework — the same mechanism Playwright uses.
+
+let _cdpAttachedTabId = null;
+
+async function ensureCdpAttached(tabId) {
+  if (_cdpAttachedTabId === tabId) return;
+  // Detach from previous tab if needed
+  if (_cdpAttachedTabId !== null) {
+    try { await chrome.debugger.detach({ tabId: _cdpAttachedTabId }); } catch (_) {}
+    _cdpAttachedTabId = null;
+  }
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+    _cdpAttachedTabId = tabId;
+    console.log("[CDP] Attached to tab", tabId);
+  } catch (err) {
+    if (err.message?.includes("Already attached")) {
+      _cdpAttachedTabId = tabId;
+      console.log("[CDP] Already attached to tab", tabId);
+    } else {
+      throw new Error(`CDP attach failed: ${err.message}`);
+    }
+  }
+}
+
+async function cdpSend(tabId, method, params = {}) {
+  await ensureCdpAttached(tabId);
+  return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
+// Clean up on debugger detach (e.g. user closes DevTools or navigates cross-origin)
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source.tabId === _cdpAttachedTabId) {
+    console.log("[CDP] Detached from tab", source.tabId, "reason:", reason);
+    _cdpAttachedTabId = null;
   }
 });
 
@@ -1024,7 +1085,14 @@ const _commandHandlers = {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
       func: (sel, inclText, maxRes) => {
-        const els = document.querySelectorAll(sel);
+        function deepQueryAll(root, s) {
+          let results = [...root.querySelectorAll(s)];
+          for (const el of root.querySelectorAll("*")) {
+            if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, s));
+          }
+          return results;
+        }
+        const els = deepQueryAll(document, sel);
         const out = [];
         const limit = Math.min(els.length, maxRes || 20);
         for (let i = 0; i < limit; i++) {
@@ -1103,12 +1171,41 @@ const _commandHandlers = {
         if (!el) return { typed: false, error: `No element found for selector: ${sel}` };
 
         el.focus();
-        if (clear) {
+
+        // Handle contenteditable elements
+        if (el.isContentEditable) {
+          if (clear) {
+            el.textContent = "";
+          }
+          document.execCommand("insertText", false, txt);
+          return {
+            typed: true,
+            tagName: el.tagName.toLowerCase(),
+            id: el.id || null,
+            finalValue: (el.textContent || "").slice(0, 200),
+            method: "contenteditable",
+          };
+        }
+
+        // React-compatible value setting via native setter
+        const proto = el instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+        const nativeSetter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+
+        if (clear && nativeSetter) {
+          nativeSetter.call(el, "");
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        } else if (clear) {
           el.value = "";
           el.dispatchEvent(new Event("input", { bubbles: true }));
         }
 
-        el.value = txt;
+        if (nativeSetter) {
+          nativeSetter.call(el, txt);
+        } else {
+          el.value = txt;
+        }
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
 
@@ -1117,6 +1214,7 @@ const _commandHandlers = {
           tagName: el.tagName.toLowerCase(),
           id: el.id || null,
           finalValue: el.value.slice(0, 200),
+          method: nativeSetter ? "native_setter" : "direct",
         };
       },
       args: [selector, text, clearFirst !== false],
@@ -1229,18 +1327,55 @@ const _commandHandlers = {
     if (!tabId) throw new Error("No active tab found");
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId },
+    // Run in all frames (main + iframes) and aggregate results
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
       func: () => {
-        const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"]';
-        const els = document.querySelectorAll(selectors);
-        const out = [];
-        const limit = Math.min(els.length, 60);
-        for (let i = 0; i < limit; i++) {
-          const el = els[i];
+        // Shadow DOM-piercing querySelectorAll
+        function deepQueryAll(root, sel) {
+          let results = [...root.querySelectorAll(sel)];
+          for (const el of root.querySelectorAll("*")) {
+            if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel));
+          }
+          return results;
+        }
+
+        const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="combobox"], [role="searchbox"]';
+        const els = deepQueryAll(document, selectors);
+        const vw = window.innerWidth, vh = window.innerHeight;
+
+        // Separate visible-in-viewport vs offscreen, skip truly hidden
+        const inView = [], offScreen = [];
+        for (const el of els) {
           const rect = el.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue; // skip hidden
-          const entry = {
+          if (rect.width === 0 && rect.height === 0) continue;
+          const style = getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden") continue;
+          if (rect.bottom >= 0 && rect.top <= vh && rect.right >= 0 && rect.left <= vw) {
+            inView.push(el);
+          } else {
+            offScreen.push(el);
+          }
+        }
+
+        // Prioritize in-viewport elements, then offscreen, cap at 200
+        const combined = [...inView, ...offScreen];
+        const limit = Math.min(combined.length, 200);
+        const out = [];
+
+        function buildSelector(el) {
+          if (el.id) return `#${el.id}`;
+          if (el.name) return `${el.tagName.toLowerCase()}[name="${el.name}"]`;
+          let s = el.tagName.toLowerCase();
+          if (el.className && typeof el.className === "string") {
+            s += "." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
+          }
+          return s;
+        }
+
+        for (let i = 0; i < limit; i++) {
+          const el = combined[i];
+          out.push({
             index: i,
             tagName: el.tagName.toLowerCase(),
             type: el.type || null,
@@ -1251,29 +1386,41 @@ const _commandHandlers = {
             ariaLabel: el.getAttribute("aria-label") || null,
             href: el.href || null,
             disabled: el.disabled || false,
-          };
-          // Build a reasonable selector
-          if (el.id) {
-            entry.selector = `#${el.id}`;
-          } else if (el.name) {
-            entry.selector = `${el.tagName.toLowerCase()}[name="${el.name}"]`;
-          } else {
-            let s = el.tagName.toLowerCase();
-            if (el.className && typeof el.className === "string") {
-              s += "." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
-            }
-            entry.selector = s;
-          }
-          out.push(entry);
+            inViewport: i < inView.length,
+            selector: buildSelector(el),
+          });
         }
-        return { total: els.length, returned: out.length, elements: out };
+        return { total: els.length, inViewport: inView.length, returned: out.length, elements: out, isMainFrame: window === window.top };
       },
     });
+
+    // Aggregate: main frame first, then iframe elements
+    let allElements = [];
+    let totalCount = 0;
+    let inViewportCount = 0;
+    for (const frame of results) {
+      if (!frame.result) continue;
+      const r = frame.result;
+      totalCount += r.total;
+      inViewportCount += r.inViewport;
+      const framePrefix = r.isMainFrame ? "" : "[iframe] ";
+      for (const el of r.elements) {
+        el.text = framePrefix + el.text;
+        allElements.push(el);
+      }
+    }
+
+    // Re-index and cap at 200 total
+    allElements = allElements.slice(0, 200);
+    allElements.forEach((el, i) => el.index = i);
 
     return {
       url: tab?.url || "",
       title: tab?.title || "",
-      ...(result.result || {}),
+      total: totalCount,
+      inViewport: inViewportCount,
+      returned: allElements.length,
+      elements: allElements,
     };
   },
 
@@ -1284,11 +1431,19 @@ const _commandHandlers = {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
       func: (searchText) => {
+        function deepQueryAll(root, sel) {
+          let results = [...root.querySelectorAll(sel)];
+          for (const el of root.querySelectorAll("*")) {
+            if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel));
+          }
+          return results;
+        }
         const lower = searchText.toLowerCase();
-        const all = document.querySelectorAll('a, button, [role="button"], input[type="submit"], input[type="button"]');
+        const all = deepQueryAll(document, 'a, button, [role="button"], [role="link"], [role="tab"], [role="menuitem"], input[type="submit"], input[type="button"]');
         for (const el of all) {
           const elText = (el.textContent || el.value || "").trim().toLowerCase();
-          if (elText.includes(lower) && el.offsetParent !== null) {
+          const ariaLabel = (el.getAttribute("aria-label") || "").toLowerCase();
+          if ((elText.includes(lower) || ariaLabel.includes(lower)) && el.offsetParent !== null) {
             el.click();
             return { clicked: true, tagName: el.tagName.toLowerCase(), text: (el.textContent || el.value || "").trim().slice(0, 100) };
           }
@@ -1408,6 +1563,232 @@ const _commandHandlers = {
       url: tab.url || "",
       image_url: `${BACKEND_URL}/screenshots/${screenshotData.id}/image`,
     };
+  },
+
+  // ── CDP-based commands (OS-level input, works with React/Vue/Angular) ───
+
+  cdp_click: async ({ selector, x, y }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    let clickX = x;
+    let clickY = y;
+
+    if (selector && (clickX === undefined || clickY === undefined)) {
+      // Resolve selector to coordinates via page script
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+          const rect = el.getBoundingClientRect();
+          return {
+            x: Math.round(rect.x + rect.width / 2),
+            y: Math.round(rect.y + rect.height / 2),
+            tagName: el.tagName.toLowerCase(),
+            text: (el.textContent || "").trim().slice(0, 100),
+          };
+        },
+        args: [selector],
+      });
+
+      if (!result.result) {
+        return { clicked: false, error: `No element found for selector: ${selector}` };
+      }
+      clickX = result.result.x;
+      clickY = result.result.y;
+    }
+
+    if (clickX === undefined || clickY === undefined) {
+      return { clicked: false, error: "No coordinates resolved — provide selector or x/y" };
+    }
+
+    // OS-level mouse events via CDP
+    await cdpSend(tabId, "Input.dispatchMouseEvent", {
+      type: "mousePressed", x: clickX, y: clickY, button: "left", clickCount: 1,
+    });
+    await cdpSend(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased", x: clickX, y: clickY, button: "left", clickCount: 1,
+    });
+
+    return { clicked: true, x: clickX, y: clickY, selector: selector || null };
+  },
+
+  cdp_type: async ({ selector, text, clearFirst }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    // Focus the element by clicking it
+    if (selector) {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+          const rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        },
+        args: [selector],
+      });
+
+      if (!result.result) {
+        return { typed: false, error: `No element found for selector: ${selector}` };
+      }
+
+      // Click to focus
+      await cdpSend(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed", x: result.result.x, y: result.result.y, button: "left", clickCount: 1,
+      });
+      await cdpSend(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased", x: result.result.x, y: result.result.y, button: "left", clickCount: 1,
+      });
+    }
+
+    // Clear existing text if requested
+    if (clearFirst) {
+      // Select all (Ctrl+A)
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyDown", key: "a", code: "KeyA", modifiers: 2, // 2 = Ctrl
+        windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65,
+      });
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyUp", key: "a", code: "KeyA", modifiers: 2,
+        windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65,
+      });
+      // Delete selection
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyDown", key: "Backspace", code: "Backspace",
+        windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8,
+      });
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyUp", key: "Backspace", code: "Backspace",
+        windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8,
+      });
+    }
+
+    // Type each character via CDP — triggers React onChange, autocomplete, etc.
+    for (const char of text) {
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyDown", text: char, key: char,
+        windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0),
+      });
+      await cdpSend(tabId, "Input.dispatchKeyEvent", {
+        type: "keyUp", key: char,
+        windowsVirtualKeyCode: char.charCodeAt(0), nativeVirtualKeyCode: char.charCodeAt(0),
+      });
+    }
+
+    return { typed: true, length: text.length, selector: selector || null };
+  },
+
+  cdp_get_accessibility_tree: async ({ maxDepth, interactiveOnly }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    const { nodes } = await cdpSend(tabId, "Accessibility.getFullAXTree", {
+      depth: maxDepth || 10,
+    });
+
+    // Interactive roles we care about for autopilot
+    const interactiveRoles = new Set([
+      "button", "link", "textbox", "combobox", "searchbox", "spinbutton",
+      "slider", "checkbox", "radio", "switch", "tab", "menuitem",
+      "menuitemcheckbox", "menuitemradio", "option", "listbox", "tree",
+      "treeitem", "gridcell", "columnheader", "rowheader", "row",
+    ]);
+
+    const filterInteractive = interactiveOnly !== false;
+    const elements = [];
+
+    for (const node of nodes) {
+      const role = node.role?.value || "";
+      const name = node.name?.value || "";
+      const value = node.value?.value || "";
+      const description = node.description?.value || "";
+
+      // Skip ignored/generic nodes
+      if (node.ignored || role === "none" || role === "generic") continue;
+
+      // Filter to interactive elements if requested
+      if (filterInteractive && !interactiveRoles.has(role)) continue;
+
+      // Skip unnamed elements (usually decorative)
+      if (!name && !value && !description) continue;
+
+      const entry = {
+        nodeId: node.nodeId,
+        role,
+        name,
+        value: value || null,
+        description: description || null,
+        focused: node.focused || false,
+        disabled: false,
+      };
+
+      // Check for disabled state
+      if (node.properties) {
+        for (const prop of node.properties) {
+          if (prop.name === "disabled" && prop.value?.value === true) {
+            entry.disabled = true;
+          }
+        }
+      }
+
+      // Get bounding box if available via backend node
+      if (node.backendDOMNodeId) {
+        entry.backendDOMNodeId = node.backendDOMNodeId;
+      }
+
+      elements.push(entry);
+    }
+
+    // Get current page info
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    return {
+      url: tab?.url || "",
+      title: tab?.title || "",
+      total: nodes.length,
+      interactive: elements.length,
+      elements,
+    };
+  },
+
+  cdp_press_key: async ({ key, modifiers }) => {
+    const tabId = await getActiveTabId();
+    if (!tabId) throw new Error("No active tab found");
+
+    // Map common key names to CDP parameters
+    const keyMap = {
+      "Enter": { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 },
+      "Tab": { key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 },
+      "Escape": { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+      "Backspace": { key: "Backspace", code: "Backspace", windowsVirtualKeyCode: 8 },
+      "ArrowDown": { key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 },
+      "ArrowUp": { key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 },
+      "ArrowLeft": { key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+      "ArrowRight": { key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 },
+      "Space": { key: " ", code: "Space", windowsVirtualKeyCode: 32 },
+      "Delete": { key: "Delete", code: "Delete", windowsVirtualKeyCode: 46 },
+      "Home": { key: "Home", code: "Home", windowsVirtualKeyCode: 36 },
+      "End": { key: "End", code: "End", windowsVirtualKeyCode: 35 },
+      "PageUp": { key: "PageUp", code: "PageUp", windowsVirtualKeyCode: 33 },
+      "PageDown": { key: "PageDown", code: "PageDown", windowsVirtualKeyCode: 34 },
+    };
+
+    const mapped = keyMap[key] || { key, code: key, windowsVirtualKeyCode: key.charCodeAt(0) };
+    const mod = modifiers || 0; // 1=Alt, 2=Ctrl, 4=Meta, 8=Shift
+
+    await cdpSend(tabId, "Input.dispatchKeyEvent", {
+      type: "keyDown", ...mapped, modifiers: mod, nativeVirtualKeyCode: mapped.windowsVirtualKeyCode,
+    });
+    await cdpSend(tabId, "Input.dispatchKeyEvent", {
+      type: "keyUp", ...mapped, modifiers: mod, nativeVirtualKeyCode: mapped.windowsVirtualKeyCode,
+    });
+
+    return { pressed: true, key, modifiers: mod };
   },
 };
 
