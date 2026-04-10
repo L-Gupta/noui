@@ -1428,6 +1428,7 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
                 _primary_param = {
                     "navigate": "url",
                     "click_element": "selector",
+                    "click_at": "x",
                     "click_by_text": "text",
                     "type_text": "selector",
                     "type_into_label": "label",
@@ -1456,6 +1457,15 @@ def cmd_autopilot_browser(args: argparse.Namespace) -> int:
                         and "value" not in params
                     ):
                         params["value"] = arg
+                    elif cmd_type == "click_at" and "x" in params and "y" not in params:
+                        params["y"] = arg
+
+    # Convert types for specific commands
+    if cmd_type == "click_at":
+        params["x"] = float(params.get("x", 0))
+        params["y"] = float(params.get("y", 0))
+    if cmd_type == "click_by_text" and "exact" in params:
+        params["exact"] = str(params["exact"]).lower() in ("true", "1", "yes")
 
     try:
         result = _http(

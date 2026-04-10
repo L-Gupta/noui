@@ -160,7 +160,9 @@ async def upload_har_compat(
     file_path.write_bytes(content)
     logger.info(
         "Compat HAR upload: capture_session=%s → stored as %s/%s",
-        session_id, session_type, store_id,
+        session_id,
+        session_type,
+        store_id,
     )
 
     # Also update CaptureSession.har_file_path so the elicitation GET route can find it

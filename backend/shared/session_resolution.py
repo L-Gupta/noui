@@ -28,17 +28,13 @@ async def resolve_domain_session(
     from backend.login.models import LoginSession
     from backend.workflow.models import WorkflowSession
 
-    r = await db.execute(
-        select(CaptureSession).where(CaptureSession.id == capture_session_id)
-    )
+    r = await db.execute(select(CaptureSession).where(CaptureSession.id == capture_session_id))
     cs = r.scalar_one_or_none()
     if not cs or not cs.process_id:
         return None
 
     # Check login first — login sessions are more specific
-    lr = await db.execute(
-        select(LoginSession).where(LoginSession.process_id == cs.process_id)
-    )
+    lr = await db.execute(select(LoginSession).where(LoginSession.process_id == cs.process_id))
     login = lr.scalar_one_or_none()
     if login:
         return login.id, "login"
