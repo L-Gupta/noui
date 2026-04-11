@@ -726,7 +726,7 @@ def cmd_login_register(args: argparse.Namespace) -> int:
 
 
 def cmd_login_validate(args: argparse.Namespace) -> int:
-    """Wait for Tabby profile to become HEALTHY."""
+    """Wait for a HEALTHY browser session to exist for the registered profile's app."""
     if not _tabby_alive():
         print(_red(f"Tabby API not reachable at {TABBY_API_HOST}"))
         return 1
@@ -744,40 +744,39 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
 
     provisioned = bundle.get("_provisioned", {})
     profile_db_id = provisioned.get("profile_db_id", "")
-    if not profile_db_id:
-        print(_red("No profile_db_id found in bundle — run `noui login register` first"))
+    app_id = provisioned.get("app_id", "")
+    profile_id = provisioned.get("profile_id", profile_db_id)
+    if not profile_db_id or not app_id:
+        print(_red("No profile_db_id/app_id found in bundle — run `noui login register` first"))
         return 1
 
     admin_token = _get_admin_token()
     if not admin_token:
         return 1
 
-    print(f"Polling profile {_cyan(profile_db_id)} for HEALTHY (up to 60s)", end="", flush=True)
+    print(f"Polling sessions for app {_cyan(app_id)} (profile '{profile_id}') up to 60s", end="", flush=True)
     deadline = time.time() + 60
-    final_state = ""
     while time.time() < deadline:
         time.sleep(3)
         print(".", end="", flush=True)
         try:
-            resp = _tabby_http("GET", f"/admin/service-profiles/{profile_db_id}", token=admin_token)
-            assert isinstance(resp, dict)
-            final_state = resp.get("state", resp.get("status", ""))  # type: ignore[assignment]
-            if final_state in ("HEALTHY", "ACTIVE"):
-                break
-            if final_state in ("FAILED", "ERROR"):
+            sessions = _get_sessions(admin_token)
+            healthy = [s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"]
+            if healthy:
                 print()
-                print(_red(f"Profile entered failed state: {final_state}"))
+                print(_green(f"✓ Session for profile '{profile_id}' is HEALTHY (session {healthy[0].get('id', '')[:8]}…)"))
+                return 0
+            failed = [s for s in sessions if s.get("app_id") == app_id and s.get("state") in ("FAILED", "ERROR")]
+            if failed:
+                print()
+                print(_red(f"Session entered failed state: {failed[0].get('state')}"))
                 return 1
         except (RuntimeError, AssertionError):
             pass
     else:
         print()
-        print(_red("Profile did not reach HEALTHY within 60s"))
+        print(_red("No HEALTHY session found within 60s — run: noui tabby session ensure"))
         return 1
-
-    print()
-    print(_green(f"Profile '{profile_db_id}' is {final_state}"))
-    return 0
 
 
 def cmd_login_credentials(args: argparse.Namespace) -> int:
