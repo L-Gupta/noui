@@ -754,19 +754,33 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
     if not admin_token:
         return 1
 
-    print(f"Polling sessions for app {_cyan(app_id)} (profile '{profile_id}') up to 60s", end="", flush=True)
+    print(
+        f"Polling sessions for app {_cyan(app_id)} (profile '{profile_id}') up to 60s",
+        end="",
+        flush=True,
+    )
     deadline = time.time() + 60
     while time.time() < deadline:
         time.sleep(3)
         print(".", end="", flush=True)
         try:
             sessions = _get_sessions(admin_token)
-            healthy = [s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"]
+            healthy = [
+                s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"
+            ]
             if healthy:
                 print()
-                print(_green(f"✓ Session for profile '{profile_id}' is HEALTHY (session {healthy[0].get('id', '')[:8]}…)"))
+                print(
+                    _green(
+                        f"✓ Session for profile '{profile_id}' is HEALTHY (session {healthy[0].get('id', '')[:8]}…)"
+                    )
+                )
                 return 0
-            failed = [s for s in sessions if s.get("app_id") == app_id and s.get("state") in ("FAILED", "ERROR")]
+            failed = [
+                s
+                for s in sessions
+                if s.get("app_id") == app_id and s.get("state") in ("FAILED", "ERROR")
+            ]
             if failed:
                 print()
                 print(_red(f"Session entered failed state: {failed[0].get('state')}"))

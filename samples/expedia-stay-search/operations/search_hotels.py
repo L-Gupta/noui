@@ -85,15 +85,19 @@ async def _find_expedia_page() -> str | None:
 async def _cdp_eval(ws_url: str, expression: str) -> dict:
     """Evaluate a JS expression in the browser and return the parsed result."""
     async with websockets.connect(ws_url) as ws:
-        await ws.send(json.dumps({
-            "id": 1,
-            "method": "Runtime.evaluate",
-            "params": {
-                "expression": expression,
-                "awaitPromise": True,
-                "returnByValue": True,
-            },
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Runtime.evaluate",
+                    "params": {
+                        "expression": expression,
+                        "awaitPromise": True,
+                        "returnByValue": True,
+                    },
+                }
+            )
+        )
         resp = json.loads(await ws.recv())
 
     result = resp.get("result", {}).get("result", {})
@@ -187,11 +191,15 @@ async def _search_properties(
 
     # Navigate via CDP
     async with websockets.connect(ws_url) as ws:
-        await ws.send(json.dumps({
-            "id": 1,
-            "method": "Page.navigate",
-            "params": {"url": search_url},
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "method": "Page.navigate",
+                    "params": {"url": search_url},
+                }
+            )
+        )
         await ws.recv()
 
     # Wait for SPA to render results
@@ -204,6 +212,7 @@ async def _search_properties(
 # ---------------------------------------------------------------------------
 # Main execute
 # ---------------------------------------------------------------------------
+
 
 async def execute(
     destination: str,
@@ -233,8 +242,13 @@ async def execute(
 
     # Search for hotels
     search_data = await _search_properties(
-        ws_url, region_id, dest_info["name"],
-        check_in, check_out, guests, rooms,
+        ws_url,
+        region_id,
+        dest_info["name"],
+        check_in,
+        check_out,
+        guests,
+        rooms,
     )
 
     # Build search URL for reference

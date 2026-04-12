@@ -7,6 +7,7 @@ and executes fetch() from inside Chrome, bypassing TLS fingerprinting.
 This module is kept as a stub for compatibility with the NoUI runtime
 conventions. The actual auth flow is handled in each operation via CDP.
 """
+
 from __future__ import annotations
 
 
