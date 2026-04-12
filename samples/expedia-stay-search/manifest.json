@@ -1,0 +1,50 @@
+{
+  "schema_version": "2",
+  "server_id": "expedia-stay-search",
+  "app": {
+    "name": "Expedia Stay Search",
+    "slug": "expedia-stay-search"
+  },
+  "workflow": {
+    "id": "expedia-stay-search",
+    "name": "Expedia Stay Search"
+  },
+  "auth": {
+    "requires_auth": true,
+    "strategy": "cdp_browser_session",
+    "notes": "Akamai Bot Manager blocks all Python HTTP clients (httpx, curl) regardless of cookies. Operations execute fetch() from inside the Tabby browser via CDP (localhost:9222) to bypass TLS fingerprinting."
+  },
+  "runtime": {
+    "type": "fastmcp",
+    "entrypoint": "server.py",
+    "transport": "stdio",
+    "direct_execution": true
+  },
+  "tools": [
+    {
+      "name": "search_hotels",
+      "description": "Search for available hotels on Expedia with pricing, ratings, and reviews",
+      "method": "GET",
+      "path": "/Hotel-Search",
+      "module": "operations/search_hotels.py"
+    }
+  ],
+  "artifacts": {
+    "server_file": "server.py",
+    "tools_file": "tools.json",
+    "files": [
+      "server.py",
+      "tools.json",
+      "manifest.json",
+      "noui_runtime/auth.py",
+      "operations/search_hotels.py"
+    ]
+  },
+  "generation": {
+    "generated_at": "2026-04-12T00:00:00Z",
+    "generator": "noui",
+    "generator_version": "v2",
+    "generalized": true,
+    "generalized_notes": "CDP workaround applied — operations use Runtime.evaluate + fetch() inside Chrome instead of httpx. See /noui-generalize skill Phase 1."
+  }
+}
