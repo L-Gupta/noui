@@ -1,0 +1,70 @@
+[
+  {
+    "name": "search_hotels",
+    "description": "Search for available hotels on Expedia by destination and dates. Returns up to 25 hotel listings with per-night price, total price, guest rating (out of 10), review count, refund policy, and a direct booking URL. Uses CDP browser execution to bypass Akamai bot detection.",
+    "method": "GET",
+    "url": "https://www.expedia.com/Hotel-Search",
+    "path": "/Hotel-Search",
+    "base_url": "https://www.expedia.com",
+    "execution_strategy": "cdp_browser_fetch",
+    "params": [
+      {
+        "name": "destination",
+        "description": "City or place name to search (e.g. \"Miami Beach\" or \"Paris, France\")",
+        "type": "string",
+        "required": true,
+        "source": "query"
+      },
+      {
+        "name": "check_in",
+        "description": "Check-in date in YYYY-MM-DD format",
+        "type": "string",
+        "required": true,
+        "source": "query"
+      },
+      {
+        "name": "check_out",
+        "description": "Check-out date in YYYY-MM-DD format",
+        "type": "string",
+        "required": true,
+        "source": "query"
+      },
+      {
+        "name": "guests",
+        "description": "Number of adult guests (default: 2)",
+        "type": "integer",
+        "required": false,
+        "source": "query"
+      },
+      {
+        "name": "rooms",
+        "description": "Number of rooms (default: 1)",
+        "type": "integer",
+        "required": false,
+        "source": "query"
+      }
+    ],
+    "response_fields": [
+      {
+        "name": "listings",
+        "description": "Array of hotel listings, each with: name, price_per_night, price_total, rating, rating_label, reviews_count, refundable, url"
+      },
+      {
+        "name": "listings_count",
+        "description": "Total number of listings found on the page"
+      },
+      {
+        "name": "search_url",
+        "description": "Direct Expedia search URL for reference"
+      },
+      {
+        "name": "destination",
+        "description": "Resolved destination name from Expedia typeahead"
+      },
+      {
+        "name": "region_id",
+        "description": "Expedia region ID for the resolved destination"
+      }
+    ]
+  }
+]

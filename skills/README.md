@@ -78,7 +78,31 @@ Path B (unauthenticated / public API):
   → workflow export-mcp <session_id> --capture-session <capture_session_id>
 ```
 
-Output: `server_id` → used in `/noui-mcp`
+Output: `server_id` → used in `/noui-generalize` or `/noui-mcp`
+
+---
+
+### Phase 3.5 — Generalize & Fix Execution
+
+#### `/noui-generalize`
+
+Make generated MCP tools **work** and **usable**. Covers two dimensions:
+
+1. **Execution strategy** — diagnose bot detection (Akamai/Cloudflare 429s), fix Tabby credential_types DB bugs, promote profiles to ACTIVE, HITL login fallback when CloakBrowser fails, and rewrite operations to use CDP browser-side fetch (bypasses TLS fingerprinting).
+2. **Interface cleanup** — rename raw API params (`f_sid`, `bl`, `reqid`) to natural-language names (`origin`, `destination`, `departure_date`) so Claude Code can invoke tools without domain knowledge.
+
+```
+Phase 0: Test tool → works? skip to interface cleanup
+  ├─ 429 / bot detection → CDP fetch rewrite
+  ├─ Empty credentials → fix credential_types DB format
+  ├─ No active profile → promote STAGING → ACTIVE
+  └─ Login didn't work → HITL login via chrome://inspect
+
+Phase 2-4: Read tools → ask user about workflow → rewrite params one tool at a time
+Phase 5: Test, iterate, restart Claude Code
+```
+
+Output: working tools with natural-language interfaces → used in `/noui-mcp`
 
 ---
 

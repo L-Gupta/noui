@@ -1,39 +1,257 @@
 ---
 name: noui-generalize
-description: Use this skill when the user wants to generalize a recorded MCP workflow, rename tools to readable names, replace raw API params with natural-language parameters, or make a generated MCP server usable by Claude Code. Triggers on "generalize a recorded workflow", "rename MCP tools", "replace raw API params with readable names", "make the MCP usable by Claude Code", "generalize tool signatures", or "I can't use the MCP tools".
+description: Use this skill when the user wants to generalize a recorded MCP workflow, rename tools to readable names, replace raw API params with natural-language parameters, fix bot detection issues (Akamai, Cloudflare, PerimeterX), rewrite operations to use CDP browser execution, or make a generated MCP server usable by Claude Code. Triggers on "generalize a recorded workflow", "rename MCP tools", "replace raw API params with readable names", "make the MCP usable by Claude Code", "generalize tool signatures", "I can't use the MCP tools", "Akamai is blocking", "429 with valid cookies", "TLS fingerprinting", "CDP fetch", "execute from inside the browser", "anti-bot workaround", "tabby credentials are empty", or "browser is authenticated but API calls fail".
 ---
 
 # NoUI Generalize
 
-Take a generated FastMCP server with raw internal API parameters and rewrite it to use natural-language parameters (`origin`, `destination`, `departure_date`, etc.) so Claude Code can invoke the tools without domain knowledge.
+Take a generated FastMCP server and make it **work** and **usable**:
 
-**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `mcp_servers/`.
+1. **Execution strategy** — if the site has bot detection (Akamai, Cloudflare), rewrite operations to execute API calls from inside the Tabby browser via CDP instead of Python `httpx`.
+2. **Interface cleanup** — replace raw internal API parameters (`f_sid`, `bl`, `reqid`) with natural-language names (`origin`, `destination`, `departure_date`) so Claude Code can invoke tools without domain knowledge.
+
+**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
 
 ---
 
 ## Critical Rules (Never Violate)
 
 - **NEVER** rewrite all tools at once — propose the new name and parameter list for each tool and get user approval before editing any files
-- **ALWAYS** preserve existing HTTP mechanics (URL, method, headers, auth pattern) — only the Python function interface changes
+- **ALWAYS** preserve existing HTTP mechanics (URL, method, headers, auth pattern) unless switching to CDP — only the Python function interface changes
 - **ALWAYS** hardcode values that were static in the recording (session routing params, build labels, `bl`, `f_sid`, `reqid`, `soc_app`, etc.) — do not expose infrastructure params to the caller
 - **NEVER** ask questions that can be answered by reading the code or URL
+- **NEVER** use `httpx`, `curl`, or any Python HTTP client to call Akamai-protected APIs — these get 429'd regardless of cookies. Use the CDP `Runtime.evaluate` + `fetch()` pattern instead.
+- **ALWAYS** connect to the direct CDP port (`localhost:9222`) for `Runtime.evaluate` — the Tabby relay (`localhost:9223`) only allows screencast and input events.
+- **ALWAYS** use `credentials: 'include'` in browser-side `fetch()` calls — without it, cookies are not sent.
+- **NEVER** assume "Login successful" in worker logs means login actually worked — CloakBrowser reports success when the DSL finishes, not when auth cookies appear. Always verify by checking cookies.
 - After rewriting, always remind the user to restart Claude Code to reload the updated tools
 
 ---
 
-## Phase 1 — Understand the Server
+## Phase 0 — Diagnose Execution Strategy
 
-1. Find the server directory. Look in `mcp_servers/` for the most recently modified server, or ask the user which server to generalize:
+Before touching tool names or params, check whether the tools actually work.
+
+### 0a. Find and test the server
 
 ```bash
 ls -lt mcp_servers/
 ```
 
-2. Read `tools.json` — note all tool names and their raw parameter names.
+Run a quick end-to-end test:
 
-3. Read each `operations/<name>.py` — understand the HTTP call: URL, method, request body structure, which params are infrastructure vs. business inputs.
+```bash
+.venv/bin/python -c "
+import asyncio, json, sys
+sys.path.insert(0, 'mcp_servers/<app_slug>/<server_id>')
+from operations.<tool_name> import execute
+async def test():
+    result = await execute(...)  # fill in sample params
+    print(json.dumps(result, indent=2)[:2000])
+asyncio.run(test())
+"
+```
 
-4. Ask the user:
+### 0b. Classify the result
+
+| Result | Diagnosis | Next step |
+|---|---|---|
+| 200 with real data | Tool works — skip to Phase 2 (interface cleanup) |
+| 429 / "Too Many Requests" | Bot detection (Akamai/Cloudflare) blocking Python HTTP client | Phase 1 |
+| Empty credentials / `name: ""` | Tabby credential_types format bug | Phase 1, Fix A |
+| `No active profile found` | Profile still STAGING | Phase 1, Fix B |
+| Connection refused on 9222 | No Tabby browser session running | `tabby session ensure --profile <id>` |
+
+### 0c. Confirm bot detection (if 429)
+
+Verify the browser itself can make the call:
+
+```python
+# Execute fetch from INSIDE the browser via CDP
+import asyncio, json, websockets, httpx
+
+async def test():
+    resp = await httpx.AsyncClient().get("http://localhost:9222/json", timeout=5)
+    targets = resp.json()
+    ws_url = [t["webSocketDebuggerUrl"] for t in targets if t["type"] == "page"][0]
+
+    js = """
+    fetch('/api/endpoint/test', { credentials: 'include' })
+      .then(r => r.text().then(t => JSON.stringify({status: r.status, body: t.substring(0, 200)})))
+    """
+    async with websockets.connect(ws_url) as ws:
+        await ws.send(json.dumps({
+            "id": 1, "method": "Runtime.evaluate",
+            "params": {"expression": js, "awaitPromise": True, "returnByValue": True}
+        }))
+        resp = json.loads(await ws.recv())
+        print(resp["result"]["result"]["value"])
+
+asyncio.run(test())
+```
+
+If 200 from browser but 429 from httpx → **confirmed TLS fingerprinting**. Proceed to Phase 1.
+
+---
+
+## Phase 1 — Fix Execution Strategy
+
+### Fix A — credential_types format bug
+
+After a fresh `login register`, the `service_profiles` table stores `credential_types.cookies` as a string array (`["cookie_a", "cookie_b"]`), but `credentials.service.ts` expects object arrays with `.name`. Every cookie comes back with empty name and value.
+
+```sql
+-- Run from tabby/ directory:
+-- docker compose exec -T postgres psql -U browser_hitl -d browser_hitl
+
+-- Check current format:
+SELECT credential_types FROM service_profiles WHERE profile_id = '<profile>';
+
+-- Fix: convert each string to {name, volatility} object:
+UPDATE service_profiles SET credential_types = '{
+  "cookies": [
+    {"name": "EG_SESSIONTOKEN", "volatility": "STABLE"},
+    {"name": "bm_sz", "volatility": "VOLATILE"},
+    {"name": "ak_bmsc", "volatility": "VOLATILE"},
+    {"name": "user", "volatility": "STABLE"}
+  ],
+  "headers": []
+}'
+WHERE profile_id = '<profile>';
+```
+
+Mark cookies that rotate frequently (Akamai tokens: `bm_sz`, `ak_bmsc`, `bm_so`, `bm_s`, `_abck`) as `VOLATILE`. Everything else is `STABLE`.
+
+### Fix B — Promote profile to ACTIVE
+
+The credentials API (`POST /credentials/request`) only resolves `ACTIVE` profiles. Fresh registrations start as `STAGING`.
+
+```sql
+UPDATE service_profiles SET version_state = 'ACTIVE' WHERE profile_id = '<profile>';
+```
+
+### Fix C — Set refresh_interval_seconds
+
+The keepalive runner defaults to 3600s between artifact re-exports. Set lower for faster credential refresh:
+
+```sql
+UPDATE applications
+SET export_policy = export_policy || '{"refresh_interval_seconds": 60}'::jsonb
+WHERE name ILIKE '%<app_name>%';
+```
+
+### Fix D — HITL login (when CloakBrowser fails)
+
+If the automated login DSL can't complete (Akamai blocks form interactions), log in manually:
+
+1. Open Chrome → `chrome://inspect`
+2. Click "Configure..." → add `localhost:9222`
+3. Click **inspect** on the page target
+4. In DevTools Console: `window.location = 'https://example.com/login'`
+5. Complete login manually via the screencast panel
+6. Force re-export:
+   ```sql
+   UPDATE sessions SET artifacts_last_exported_at = NULL WHERE id = '<session_id>';
+   ```
+
+> **Port 9222 vs 9223:** Port 9222 is the direct CDP endpoint (full access). Port 9223 is Tabby's relay that only allows `Page.screencast*` and `Input.dispatch*Event`. Use 9222 for all workaround steps.
+
+### Fix E — Rewrite operations to use CDP fetch
+
+When bot detection blocks Python HTTP clients, execute API calls from inside the browser. Two patterns:
+
+**Pattern 1: CDP fetch (for JSON APIs)**
+
+```python
+import asyncio, json
+import httpx
+import websockets
+
+CDP_LIST_URL = "http://localhost:9222/json"
+
+async def _find_page(domain: str) -> str | None:
+    """Return WebSocket debugger URL for a page matching the domain."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(CDP_LIST_URL, timeout=5)
+        targets = resp.json()
+    for t in targets:
+        if t.get("type") == "page" and domain in t.get("url", ""):
+            return t["webSocketDebuggerUrl"]
+    return None
+
+async def _cdp_eval(ws_url: str, expression: str) -> dict:
+    """Evaluate JS in the browser and return parsed result."""
+    async with websockets.connect(ws_url) as ws:
+        await ws.send(json.dumps({
+            "id": 1, "method": "Runtime.evaluate",
+            "params": {"expression": expression, "awaitPromise": True, "returnByValue": True}
+        }))
+        resp = json.loads(await ws.recv())
+    result = resp["result"]["result"]
+    if result.get("type") != "string":
+        raise RuntimeError(f"CDP eval failed: {json.dumps(result)[:300]}")
+    return json.loads(result["value"])
+
+async def _cdp_fetch(ws_url: str, url: str) -> dict:
+    """Execute fetch() inside the browser and return parsed JSON."""
+    js = f"""
+    fetch({json.dumps(url)}, {{ credentials: 'include' }})
+      .then(r => r.text().then(t => JSON.stringify({{status: r.status, body: t}})))
+    """
+    data = await _cdp_eval(ws_url, js)
+    if data["status"] != 200:
+        raise RuntimeError(f"API returned {data['status']}: {data['body'][:300]}")
+    return json.loads(data["body"])
+```
+
+**Pattern 2: Navigate + DOM scrape (for SPA-rendered content)**
+
+When data is rendered by client-side JS and not available as a JSON API:
+
+```python
+async def _navigate_and_scrape(ws_url: str, url: str, extract_js: str, wait_seconds: int = 7) -> dict:
+    """Navigate to a URL, wait for SPA render, then extract data via JS."""
+    async with websockets.connect(ws_url) as ws:
+        await ws.send(json.dumps({
+            "id": 1, "method": "Page.navigate", "params": {"url": url}
+        }))
+        await ws.recv()
+    await asyncio.sleep(wait_seconds)
+    return await _cdp_eval(ws_url, extract_js)
+```
+
+To find the right DOM selectors, inspect `data-stid` or similar attributes:
+
+```python
+# Discovery: list all data-stid values on the page
+js = """
+JSON.stringify([...new Set(
+  [...document.querySelectorAll('[data-stid]')]
+    .map(e => e.getAttribute('data-stid'))
+)].sort())
+"""
+```
+
+**What to change in each operation file:**
+
+1. Remove `from noui_runtime.auth import resolve_auth` and the `httpx` request code
+2. Add `import websockets` (already in the venv)
+3. Add the CDP helpers above (or factor into a shared module)
+4. Replace each `httpx.get/post` call with `_cdp_fetch()` for JSON APIs
+5. Replace page-scraping logic with `_navigate_and_scrape()` for SPA content
+6. Use `credentials: 'include'` in all fetch calls
+
+> **Single browser instance caveat:** Tabby runs one CloakBrowser per session. CDP navigation changes the page — if keepalive actions need the homepage, coordinate or set keepalive to `dom_check` on `body` only.
+
+---
+
+## Phase 2 — Understand the Server
+
+1. Read `tools.json` — note all tool names and their raw parameter names.
+
+2. Read each `operations/<name>.py` — understand the call: URL, method, request body structure, which params are infrastructure vs. business inputs.
+
+3. Ask the user:
 
 > *"What workflow did you record? Describe in plain language what you were doing — for example: 'I searched for flights from Fortaleza to Seattle on June 1 for 1 adult'."*
 
@@ -41,7 +259,7 @@ Use the answer to anchor the business meaning of each tool.
 
 ---
 
-## Phase 2 — Close Gaps Per Tool
+## Phase 3 — Close Gaps Per Tool
 
 For each tool, ask only the questions needed to understand which parameters carry business input:
 
@@ -53,11 +271,11 @@ Skip questions that are answerable from the URL path, parameter names, or values
 
 ---
 
-## Phase 3 — Rewrite Tools One at a Time
+## Phase 4 — Rewrite Tools One at a Time
 
 For each tool, follow this sequence:
 
-### 3a. Propose
+### 4a. Propose
 
 Show the user the proposed new interface before touching any files:
 
@@ -76,10 +294,12 @@ Hardcoded (from recording):
   - reqid: <value>
   - soc_app: <value>
 
+Execution: CDP fetch / httpx (state which)
+
 Approve this? (yes / adjust: ...)
 ```
 
-### 3b. Edit on approval
+### 4b. Edit on approval
 
 Once approved, make four edits:
 
@@ -88,7 +308,7 @@ Once approved, make four edits:
    - New parameters are natural-language (`origin`, `destination`, etc.)
    - Infrastructure params are hardcoded as local variables
    - Build the raw request from the natural params (string formatting, encoding)
-   - Preserve the actual HTTP call (httpx/requests, headers, auth)
+   - Use CDP fetch if Phase 1 flagged bot detection; otherwise preserve the existing HTTP call
 
 2. **`tools.json`** — update the entry:
    - `name` → new tool name
@@ -97,7 +317,7 @@ Once approved, make four edits:
 
 3. **`server.py`** — update the import and tool registration to use the new function name (if the function was renamed)
 
-4. **`API.md`** — refresh the documentation to reflect the change:
+4. **`API.md`** — refresh the documentation:
 
 ```bash
 .venv/bin/python cli/main.py mcp docs <server_id>
@@ -105,13 +325,13 @@ Once approved, make four edits:
 
 This overwrites `API.md` from the current `tools.json`. Run it after every tool edit, not just at the end.
 
-### 3c. Move to next tool
+### 4c. Move to next tool
 
-Repeat Phase 3 for each tool. Do not batch edits.
+Repeat Phase 4 for each tool. Do not batch edits.
 
 ---
 
-## Phase 4 — Iterate After Testing
+## Phase 5 — Iterate After Testing
 
 After all tools are rewritten, do a final docs refresh:
 
@@ -131,6 +351,9 @@ When the user reports results, fix any issues:
 | Missing required parameter | Add it to signature and body |
 | Tool call fails with HTTP error | Read the error body, compare to original recording values |
 | Body encoding wrong | Check if original body was URL-encoded, JSON, or protobuf — reconstruct accordingly |
+| 429 from tool call | Bot detection — go back to Phase 1, Fix E |
+| CDP connection refused | Tabby session not running — `tabby session ensure --profile <id>` |
+| `fetch()` returns 403 inside browser | Session expired — redo HITL login (Phase 1, Fix D) |
 
 Keep iterating until the user can successfully invoke the workflow using natural language.
 
@@ -147,3 +370,63 @@ Keep iterating until the user can successfully invoke the workflow using natural
 | Infrastructure headers (`x-goog-ext-*`) | Any value that changes meaningfully per call |
 
 When in doubt: if the value was the same every time during recording and doesn't carry user intent, hardcode it.
+
+---
+
+## Known Anti-Bot Sites
+
+| Site | Bot Detection | CloakBrowser Login | Workaround |
+|---|---|---|---|
+| Expedia | Akamai Bot Manager | Form blocked silently; reaches homepage but can't submit | HITL login + CDP fetch + DOM scrape |
+| (add more as discovered) | | | |
+
+---
+
+## Architecture Notes
+
+- **Why cookies alone fail:** Akamai fingerprints the TLS ClientHello, HTTP/2 settings frame, header order, and other transport-layer signals. `httpx`/`curl` have distinctly different fingerprints from Chrome, even with identical cookies.
+- **Why CDP works:** `Runtime.evaluate` + `fetch()` executes inside the real Chrome process. The HTTP request goes through Chrome's network stack with its native TLS implementation and fingerprint.
+- **Port 9222 vs 9223:** Port 9222 is the direct CDP endpoint (full access). Port 9223 is Tabby's relay proxy that only allows `Page.startScreencast`, `Page.stopScreencast`, `Page.screencastFrameAck`, and `Input.dispatch*Event`. Use 9222 for this workaround.
+- **Single browser instance:** Tabby runs one CloakBrowser per session. CDP navigation changes the page for that session — if keepalive needs the homepage, set keepalive health checks to `dom_check` on `body` rather than URL-based checks.
+
+---
+
+## Decision Flow
+
+```
+Start
+  │
+  Phase 0: Test the tool as-is
+  │
+  ├─ Works (200 with data)?
+  │     └─ Skip to Phase 2 (interface cleanup)
+  │
+  ├─ 429 / bot detection?
+  │     ├─ Confirm: browser fetch works but httpx doesn't
+  │     └─ Phase 1: Fix E (CDP rewrite)
+  │
+  ├─ Empty credentials / name: "" ?
+  │     └─ Phase 1: Fix A (credential_types format)
+  │
+  ├─ "No active profile" ?
+  │     └─ Phase 1: Fix B (promote to ACTIVE)
+  │
+  ├─ Login didn't actually work?
+  │     └─ Phase 1: Fix D (HITL login)
+  │
+  Phase 2: Read tools.json + operations + ask user about workflow
+  │
+  Phase 3: Close gaps per tool (targeted questions only)
+  │
+  Phase 4: Rewrite tools one at a time (propose → approve → edit)
+  │
+  Phase 5: Test, iterate, remind user to restart Claude Code
+```
+
+---
+
+## Related Skills
+
+- `/noui-record-login` — Record login and register with Tabby (run first for authenticated sites)
+- `/noui-record-workflow` — Record and export the workflow (run first to generate the server)
+- `/noui-mcp` — Server lifecycle after generalization (start/stop/connect to Claude Code)
