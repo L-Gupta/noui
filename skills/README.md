@@ -120,6 +120,22 @@ mcp stop <server_id>        → stop server
 → Add to ~/.claude.json      → restart Claude Code → tools available
 ```
 
+### Phase 4 (alt) — Skill Management
+
+#### `/noui-skill`
+
+List, inspect, install, and uninstall generated Claude Code skills.
+Use when `workflow export` was run with `--as skill` or `--as both`.
+
+```
+skill list                  → see all generated skills
+skill show <skill_id>       → manifest + SKILL.md preview
+skill install <skill_id>    → copy to ~/.claude/skills/<skill_id>/
+                              (add --project for .claude/skills/ in cwd)
+skill uninstall <skill_id>  → remove installed copy
+→ Claude Code loads the skill on demand — no restart
+```
+
 ## CLI Reference
 
 All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` directory.
@@ -130,3 +146,4 @@ All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` director
 | `login record / list / export / review / register / validate / import` | Login session lifecycle |
 | `workflow record / list / export` | Workflow session lifecycle |
 | `mcp list / start / stop / status` | MCP server lifecycle |
+| `skill list / show / install / uninstall` | Generated-skill lifecycle |

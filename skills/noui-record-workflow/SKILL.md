@@ -1,15 +1,34 @@
 ---
 name: noui-record-workflow
-description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export --as mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers authenticated (session-cookie via Tabby), static API-key, and unauthenticated sub-paths.
+description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server, a Claude Code Skill, or both. Triggers on "record a workflow", "export as MCP", "export as skill", "generate a FastMCP server", "generate a Claude Code skill", "noui workflow record", "workflow export", "capture a workflow", "turn a workflow into a tool", "create an MCP server from a website", or "I want to automate this workflow". Covers authenticated (session-cookie via Tabby), static API-key, and unauthenticated sub-paths. Covers both output formats.
 ---
 
 # NoUI Record Workflow
 
-Record a browser workflow and compile it into a runnable FastMCP server. Works for session-cookie apps (full Tabby login flow), static API-key apps (just set an env var), and public unauthenticated APIs.
+Record a browser workflow and compile it into a runnable FastMCP server, a Claude Code Skill, or both. Works for session-cookie apps (full Tabby login flow), static API-key apps (just set an env var), and public unauthenticated APIs.
 
 All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`.
 
 **Prerequisite:** `/noui-setup` must be complete. For Path A (session-cookie), `/noui-record-login` must also be complete and a live Tabby browser session must be running (`tabby session ensure`).
+
+---
+
+## Output Format Selection
+
+Before exporting, decide what the user actually wants. Two orthogonal axes:
+
+1. **Auth model** — Path A/B/C below (session-cookie vs static API key vs public).
+2. **Output format** — `--as mcp` (always-on FastMCP server), `--as skill` (lazy-loaded Claude Code skill), or `--as both` (default).
+
+When to pick which output:
+
+| Output | Best for |
+|---|---|
+| `--as mcp` | Tools agents invoke constantly; need typed tool schemas always in context |
+| `--as skill` | Long-tail / infrequent workflows; keeps Claude's context window clean until the intent matches |
+| `--as both` | Unsure. No extra recording work; just a second compile pass. Ship both and let usage decide. |
+
+The default is `--as both`. The rest of this skill focuses on the MCP output (auth verification, `mcp` lifecycle, etc.) because that is the longer-established path. For skill-side lifecycle (`skill list / show / install / uninstall`) invoke `/noui-skill` after export.
 
 ---
 
@@ -30,7 +49,8 @@ The compiler auto-detects the strategy from the HAR (Authorization header + no S
 ## Critical Rules (Never Violate)
 
 - **ALWAYS** start the backend before asking the user to record
-- **NEVER** skip `workflow export --as mcp` — recording alone produces no server
+- **NEVER** skip `workflow export` — recording alone produces no server or skill
+- Prefer the default `--as both` unless the user has a clear reason to pick one; it's a single extra compile pass and preserves the choice for later
 - For Path A/B: **ALWAYS** pass `--profile-slug <slug>` — this is the runtime credential identifier; without it auth falls back to unauthenticated
 - **NEVER** pass the DB UUID as `--profile-slug` — that is admin-only; use the human-readable slug (e.g. `adopt-bank`, not `8fdadf43-...`)
 - **ALWAYS** note the `server_id` printed after export — it is required for all `mcp` commands

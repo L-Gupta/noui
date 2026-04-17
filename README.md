@@ -285,9 +285,10 @@ noui login import <session_id> [--validate]
 
 noui workflow record <name> <url>      create workflow session
 noui workflow list / captures
-noui workflow export --as mcp <session_id> [--profile <tabby_profile_id>]
+noui workflow export <session_id> --as {mcp|skill|both} [--profile <tabby_profile_id>]
 
 noui mcp list / status / start / stop <server_id>
+noui skill list / show / install / uninstall <skill_id>
 
 noui tabby status / start / stop [--infra]
 noui tabby setup [--profiles <id...>] [--force]
