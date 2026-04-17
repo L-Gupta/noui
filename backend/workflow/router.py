@@ -163,53 +163,25 @@ async def delete_workflow_session(
 
 
 # ---------------------------------------------------------------------------
-# MCP export
+# Workflow export — unified (mcp | skill | both)
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{session_id}/export-mcp")
-async def export_mcp(
+async def _load_compile_inputs(
     session_id: str,
-    tabby_profile_id: str = Query(
-        "",
-        description=(
-            "Legacy: Tabby profile ID (UUID or slug). Prefer profile_slug for new integrations."
-        ),
-    ),
-    profile_slug: str = Query(
-        "",
-        description=(
-            "Tabby profile slug for runtime credential requests "
-            "(POST /credentials/request). Takes precedence over tabby_profile_id."
-        ),
-    ),
-    profile_db_id: str = Query(
-        "",
-        description="Tabby profile DB UUID for admin/version operations only.",
-    ),
-    capture_session_id: str = Query(
-        "",
-        description="ABCD capture session ID to use instead of workflow session data",
-    ),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    """Compile a workflow recording into a runnable FastMCP server.
+    capture_session_id: str,
+    db: AsyncSession,
+) -> tuple[WorkflowSession, str, dict, list[dict], list[dict]]:
+    """Load everything the compilers need from the database + HAR on disk.
 
-    - Loads click events, url events, and HAR for this session
-    - Detects auth signals and generates auth_plan.json
-    - Runs the MCP compiler
-    - Writes output to noui/mcp_servers/<app_slug>/<server_id>/
-    - Returns the manifest dict
+    Returns (session, app_slug, har, click_dicts, url_dicts).
+    Raises HTTPException on missing HAR or parse failure.
     """
-    # Load workflow session
     session = await _get_session(session_id, db)
 
-    # When recording via ABCD extension, data is stored under a capture_session_id.
-    # Fall back to the capture_session_id lookup if provided.
     har_lookup_id = capture_session_id or session_id
     har_session_type = "workflow"
 
-    # Load ClickEvent records — try workflow session first, then capture session
     click_result = await db.execute(
         select(ClickEvent)
         .where(ClickEvent.session_id == har_lookup_id, ClickEvent.session_type == har_session_type)
@@ -217,7 +189,6 @@ async def export_mcp(
     )
     click_rows = list(click_result.scalars().all())
 
-    # If no clicks via session_id, try capture_session_id column
     if not click_rows and capture_session_id:
         click_result = await db.execute(
             select(ClickEvent)
@@ -226,7 +197,6 @@ async def export_mcp(
         )
         click_rows = list(click_result.scalars().all())
 
-    # Load UrlEvent records
     url_result = await db.execute(
         select(UrlEvent)
         .where(UrlEvent.session_id == har_lookup_id, UrlEvent.session_type == har_session_type)
@@ -234,9 +204,6 @@ async def export_mcp(
     )
     url_rows = list(url_result.scalars().all())
 
-    # Load HarFile record — try capture_session_id first, then workflow session_id.
-    # The HAR upload endpoint resolves capture_session_id → workflow session_id via
-    # resolve_domain_session, so HarFile.session_id is typically the workflow ID.
     har_result = await db.execute(
         select(HarFile)
         .where(HarFile.session_id == har_lookup_id)
@@ -244,7 +211,6 @@ async def export_mcp(
     )
     har_file = har_result.scalar_one_or_none()
 
-    # If lookup was by capture_session_id and missed, fall back to workflow session_id
     if not har_file and capture_session_id and har_lookup_id != session_id:
         har_result = await db.execute(
             select(HarFile)
@@ -256,7 +222,6 @@ async def export_mcp(
     if not har_file:
         raise HTTPException(status_code=422, detail="No HAR file found for this session")
 
-    # Read and parse HAR from disk
     har_path = Path(har_file.file_path)
     if not har_path.exists():
         raise HTTPException(
@@ -268,7 +233,6 @@ async def export_mcp(
     except (json.JSONDecodeError, OSError) as exc:
         raise HTTPException(status_code=422, detail=f"Failed to read HAR file: {exc}") from exc
 
-    # Serialise ORM objects to plain dicts for the pure compiler functions
     def _click_to_dict(c: ClickEvent) -> dict:
         return {
             "id": c.id,
@@ -291,35 +255,113 @@ async def export_mcp(
     click_dicts = [_click_to_dict(c) for c in click_rows]
     url_dicts = [_url_to_dict(u) for u in url_rows]
 
-    # Derive app_slug from session name
     app_slug = re.sub(r"[^a-z0-9]+", "-", session.name.lower()).strip("-") or "app"
-    server_id = f"{app_slug}-{session_id[:8]}"
 
-    output_dir = str(_NOUI_ROOT / "mcp_servers" / app_slug / server_id)
+    return session, app_slug, har, click_dicts, url_dicts
 
-    # Run the compiler
-    try:
-        from compiler.mcp.server_generator import compile_workflow
 
-        manifest = compile_workflow(
-            session_id=session_id,
-            session_name=session.name,
-            app_slug=app_slug,
-            tabby_profile_id=tabby_profile_id,
-            har=har,
-            click_events=click_dicts,
-            url_events=url_dicts,
-            output_dir=output_dir,
-            profile_slug=profile_slug,
-            profile_db_id=profile_db_id,
+@router.post("/{session_id}/export")
+async def export_workflow(
+    session_id: str,
+    target: str = Query(
+        "both",
+        alias="as",
+        description="Output format: 'mcp', 'skill', or 'both' (default).",
+    ),
+    tabby_profile_id: str = Query(
+        "",
+        description=(
+            "Legacy: Tabby profile ID (UUID or slug). Prefer profile_slug for new integrations."
+        ),
+    ),
+    profile_slug: str = Query(
+        "",
+        description=(
+            "Tabby profile slug for runtime credential requests "
+            "(POST /credentials/request). Takes precedence over tabby_profile_id."
+        ),
+    ),
+    profile_db_id: str = Query(
+        "",
+        description="Tabby profile DB UUID for admin/version operations only.",
+    ),
+    description_override: str = Query(
+        "",
+        description="Skill-only: explicit SKILL.md description (skips the heuristic).",
+    ),
+    capture_session_id: str = Query(
+        "",
+        description="ABCD capture session ID to use instead of workflow session data",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Compile a workflow recording into an MCP server, a Skill, or both.
+
+    Output roots:
+      - mcp   → noui/workbench/mcp_servers/<app_slug>/<server_id>/
+      - skill → noui/workbench/skills/<app_slug>/
+
+    Returns a dict with top-level keys `mcp` and/or `skill` depending on `as`.
+    Each block contains the respective manifest.
+    """
+    if target not in ("mcp", "skill", "both"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid `as` value {target!r}. Expected 'mcp', 'skill', or 'both'.",
         )
-    except Exception as exc:
-        logger.exception("MCP compilation failed for session %s", session_id)
-        raise HTTPException(status_code=500, detail=f"MCP compilation failed: {exc}") from exc
 
-    logger.info(
-        "Exported MCP server for session %s → %s",
-        session_id,
-        output_dir,
+    session, app_slug, har, click_dicts, url_dicts = await _load_compile_inputs(
+        session_id, capture_session_id, db
     )
-    return manifest
+
+    result: dict = {}
+
+    if target in ("mcp", "both"):
+        server_id = f"{app_slug}-{session_id[:8]}"
+        mcp_output_dir = str(_NOUI_ROOT / "workbench" / "mcp_servers" / app_slug / server_id)
+        try:
+            from compiler.mcp.server_generator import compile_workflow
+
+            mcp_manifest = compile_workflow(
+                session_id=session_id,
+                session_name=session.name,
+                app_slug=app_slug,
+                tabby_profile_id=tabby_profile_id,
+                har=har,
+                click_events=click_dicts,
+                url_events=url_dicts,
+                output_dir=mcp_output_dir,
+                profile_slug=profile_slug,
+                profile_db_id=profile_db_id,
+            )
+        except Exception as exc:
+            logger.exception("MCP compilation failed for session %s", session_id)
+            raise HTTPException(status_code=500, detail=f"MCP compilation failed: {exc}") from exc
+        logger.info("Exported MCP server for session %s → %s", session_id, mcp_output_dir)
+        result["mcp"] = mcp_manifest
+
+    if target in ("skill", "both"):
+        skill_output_dir = str(_NOUI_ROOT / "workbench" / "skills" / app_slug)
+        try:
+            from compiler.skill.skill_generator import compile_workflow_to_skill
+
+            skill_manifest = compile_workflow_to_skill(
+                session_id=session_id,
+                session_name=session.name,
+                app_slug=app_slug,
+                tabby_profile_id=tabby_profile_id,
+                har=har,
+                click_events=click_dicts,
+                url_events=url_dicts,
+                output_dir=skill_output_dir,
+                profile_slug=profile_slug,
+                profile_db_id=profile_db_id,
+                description_override=description_override,
+            )
+        except Exception as exc:
+            logger.exception("Skill compilation failed for session %s", session_id)
+            raise HTTPException(status_code=500, detail=f"Skill compilation failed: {exc}") from exc
+        logger.info("Exported skill for session %s → %s", session_id, skill_output_dir)
+        result["skill"] = skill_manifest
+
+    return result

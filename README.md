@@ -63,9 +63,10 @@ Compiler
     → login/  — login session → Tabby Application + ServiceProfile bundle
     → mcp/    — workflow session → FastMCP server + manifest
     ↓
-Output
-    → login_recordings/              — Tabby bundle JSON files
-    → mcp_servers/<app>/<server_id>/ — runnable FastMCP packages
+Output (all under workbench/)
+    → workbench/login_recordings/              — Tabby bundle JSON files
+    → workbench/mcp_servers/<app>/<server_id>/ — runnable FastMCP packages
+    → workbench/skills/<app>/<skill_id>/       — installable Claude Code skills
     ↓
 Tabby Runtime  (persistent browser sessions + live auth)
     ↓
@@ -208,7 +209,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 | `/noui-record-login` | Record a login flow and register it with Tabby |
 | `/noui-record-workflow` | Record a workflow and export it as a FastMCP server |
 | `/noui-generalize` | Rename raw API parameters to natural-language equivalents post-export |
-| `/noui-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
+| `/noui-generate-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
 
 ------------------------------------------------------------------------
 
@@ -223,7 +224,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 # 2. Record in Chrome (extension → Workflow Recording mode → perform workflow → Complete)
 
 # 3. Export as FastMCP server
-.venv/bin/python cli/main.py workflow export-mcp <session_id>
+.venv/bin/python cli/main.py workflow export --as mcp <session_id>
 
 # 4. Start the MCP server
 .venv/bin/python cli/main.py mcp start <server_id>
@@ -248,7 +249,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 # 3. Record and export the workflow
 .venv/bin/python cli/main.py workflow record "Create Contact" "https://app.hubspot.com"
 # (record in Chrome using Workflow Recording mode)
-.venv/bin/python cli/main.py workflow export-mcp <session_id> --profile <tabby_profile_id>
+.venv/bin/python cli/main.py workflow export --as mcp <session_id> --profile <tabby_profile_id>
 
 # 4. Start the MCP server
 .venv/bin/python cli/main.py mcp start <server_id>
@@ -259,7 +260,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 ## 📦 Generated MCP Output
 
 ```
-mcp_servers/
+workbench/mcp_servers/
   <app_slug>/
     <server_id>/
       server.py            # FastMCP entrypoint
@@ -284,9 +285,12 @@ noui login import <session_id> [--validate]
 
 noui workflow record <name> <url>      create workflow session
 noui workflow list / captures
-noui workflow export-mcp <session_id> [--profile <tabby_profile_id>]
+noui workflow export <session_id> --as {mcp|skill|both} [--profile <tabby_profile_id>]
 
 noui mcp list / status / start / stop <server_id>
+noui skill list / show
+noui skill install   <skill_id> <agent> [--project]    # agent: claude-code|codex|cline|opencode|agents
+noui skill uninstall <skill_id> <agent> [--project]
 
 noui tabby status / start / stop [--infra]
 noui tabby setup [--profiles <id...>] [--force]
@@ -307,7 +311,7 @@ noui tabby session status / ensure [--profile] / stop
 | POST | `/workflow-sessions` | Create workflow session |
 | POST | `/workflow-sessions/{id}/start` | Start recording |
 | POST | `/workflow-sessions/{id}/complete` | Mark complete |
-| POST | `/workflow-sessions/{id}/export-mcp?tabby_profile_id=xxx` | Compile to FastMCP |
+| POST | `/workflow-sessions/{id}/export?as=mcp\|skill\|both` | Compile to FastMCP, Skill, or both |
 | POST | `/clicks` | Store click event |
 | POST | `/url-events` | Store URL navigation event |
 | POST | `/capture-sessions/{id}/har` | Upload HAR (extension compat) |

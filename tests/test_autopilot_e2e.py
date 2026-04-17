@@ -366,15 +366,16 @@ def test_full_autopilot_with_browser(toyapp, noui_backend):
     # 8. Export MCP
     print("  Exporting MCP...")
     try:
-        manifest = _http(
+        result = _http(
             "POST",
             _NOUI_URL,
-            f"/workflow-sessions/{workflow_session_id}/export-mcp"
-            f"?capture_session_id={capture_session_id}",
+            f"/workflow-sessions/{workflow_session_id}/export"
+            f"?as=mcp&capture_session_id={capture_session_id}",
             timeout=30,
         )
+        manifest = result.get("mcp") or {}
         server_id = manifest.get("server_id", "")
-        tools_count = manifest.get("tools_count", 0)
+        tools_count = manifest.get("tools_count", len(manifest.get("tools", [])))
         print(f"  Server ID: {server_id}")
         print(f"  Tools: {tools_count}")
         assert server_id, "No server_id returned"
@@ -490,13 +491,15 @@ def _run_standalone():
             return 1
 
         try:
-            manifest = _http(
+            result = _http(
                 "POST",
                 _NOUI_URL,
-                f"/workflow-sessions/{wf['id']}/export-mcp?capture_session_id={cs['id']}",
+                f"/workflow-sessions/{wf['id']}/export?as=mcp&capture_session_id={cs['id']}",
             )
+            manifest = result.get("mcp") or {}
             print(
-                f"   PASS: MCP exported — server_id={manifest.get('server_id')}, tools={manifest.get('tools_count')}"
+                f"   PASS: MCP exported — server_id={manifest.get('server_id')},"
+                f" tools={manifest.get('tools_count', len(manifest.get('tools', [])))}"
             )
         except Exception as exc:
             print(f"   WARN: MCP export failed (HAR may not have captured): {exc}")

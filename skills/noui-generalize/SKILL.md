@@ -5,12 +5,25 @@ description: Use this skill when the user wants to generalize a recorded MCP wor
 
 # NoUI Generalize
 
-Take a generated FastMCP server and make it **work** and **usable**:
+Take a generated FastMCP server (or Skill) and make it **work** and **usable**:
 
 1. **Execution strategy** — if the site has bot detection (Akamai, Cloudflare), rewrite operations to execute API calls from inside the Tabby browser via CDP instead of Python `httpx`.
 2. **Interface cleanup** — replace raw internal API parameters (`f_sid`, `bl`, `reqid`) with natural-language names (`origin`, `destination`, `departure_date`) so Claude Code can invoke tools without domain knowledge.
 
-**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
+**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `workbench/mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
+
+---
+
+## Works for both MCP and Skill outputs
+
+The generalization logic is identical for either output format:
+
+- **MCP output:** edit `workbench/mcp_servers/<app>/<server>/operations/<tool>.py` — the body of `async def execute(...)`. The FastMCP tool signature in `server.py` mirrors the execute() signature, so renaming params also requires updating the `server.py` decorator args.
+- **Skill output:** edit `workbench/skills/<app>/operations/<tool>.py` — the body of `async def execute(...)` *and* the `_build_parser()` argparse registrations, because the skill operation is a standalone CLI script. The `SKILL.md` body's command examples also reference the flag names, so update them too (or regenerate SKILL.md by re-running `workflow export --as skill --description-override "..."`).
+
+The Phase 0 execution diagnosis (bot detection, empty credentials, profile promotion) applies to both outputs unchanged — both runtimes share the same `noui_runtime/auth.py` and the same Tabby credential flow.
+
+After generalizing a skill, use `/noui-generate-skill` (not `/noui-generate-mcp`) for install / test.
 
 ---
 
@@ -35,7 +48,7 @@ Before touching tool names or params, check whether the tools actually work.
 ### 0a. Find and test the server
 
 ```bash
-ls -lt mcp_servers/
+ls -lt workbench/mcp_servers/
 ```
 
 Run a quick end-to-end test:
@@ -43,7 +56,7 @@ Run a quick end-to-end test:
 ```bash
 .venv/bin/python -c "
 import asyncio, json, sys
-sys.path.insert(0, 'mcp_servers/<app_slug>/<server_id>')
+sys.path.insert(0, 'workbench/mcp_servers/<app_slug>/<server_id>')
 from operations.<tool_name> import execute
 async def test():
     result = await execute(...)  # fill in sample params
@@ -429,4 +442,4 @@ Start
 
 - `/noui-record-login` — Record login and register with Tabby (run first for authenticated sites)
 - `/noui-record-workflow` — Record and export the workflow (run first to generate the server)
-- `/noui-mcp` — Server lifecycle after generalization (start/stop/connect to Claude Code)
+- `/noui-generate-mcp` — Server lifecycle after generalization (start/stop/connect to Claude Code)

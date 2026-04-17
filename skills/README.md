@@ -16,7 +16,7 @@ Or install a specific skill only:
 npx skills add adoptai/noui -s setup
 ```
 
-Skills install to `.agents/skills/` in your current project and become available as slash commands immediately.
+`npx skills add` installs these NoUI meta-skills to `.agents/skills/` in your current project by default; they become available as slash commands immediately. (That's the Vercel Labs convention. **Generated** skills produced by `workflow export --as skill` are a separate thing — they're managed via `noui skill install <id> <agent>` and can target Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` path. See `/noui-generate-skill` for details.)
 
 ## Skills
 
@@ -70,15 +70,15 @@ Record a browser workflow and compile it into a runnable FastMCP server. Support
 Path A (authenticated):
   start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
   → workflow captures (note capture_session_id)
-  → workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
+  → workflow export --as mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
 
 Path B (unauthenticated / public API):
   start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
   → workflow captures (note capture_session_id)
-  → workflow export-mcp <session_id> --capture-session <capture_session_id>
+  → workflow export --as mcp <session_id> --capture-session <capture_session_id>
 ```
 
-Output: `server_id` → used in `/noui-generalize` or `/noui-mcp`
+Output: `server_id` → used in `/noui-generalize` or `/noui-generate-mcp`
 
 ---
 
@@ -102,13 +102,13 @@ Phase 2-4: Read tools → ask user about workflow → rewrite params one tool at
 Phase 5: Test, iterate, restart Claude Code
 ```
 
-Output: working tools with natural-language interfaces → used in `/noui-mcp`
+Output: working tools with natural-language interfaces → used in `/noui-generate-mcp`
 
 ---
 
 ### Phase 4 — MCP Server Management
 
-#### `/noui-mcp`
+#### `/noui-generate-mcp`
 
 Start, stop, list, and connect generated FastMCP servers to Claude Code.
 
@@ -120,6 +120,22 @@ mcp stop <server_id>        → stop server
 → Add to ~/.claude.json      → restart Claude Code → tools available
 ```
 
+### Phase 4 (alt) — Skill Management
+
+#### `/noui-generate-skill`
+
+List, inspect, install, and uninstall generated Claude Code skills.
+Use when `workflow export` was run with `--as skill` or `--as both`.
+
+```
+skill list                  → see all generated skills
+skill show <skill_id>       → manifest + SKILL.md preview
+skill install <skill_id>    → copy to ~/.claude/skills/<skill_id>/
+                              (add --project for .claude/skills/ in cwd)
+skill uninstall <skill_id>  → remove installed copy
+→ Claude Code loads the skill on demand — no restart
+```
+
 ## CLI Reference
 
 All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` directory.
@@ -128,5 +144,6 @@ All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` director
 |---|---|
 | `start` / `stop` / `status` | Backend lifecycle |
 | `login record / list / export / review / register / validate / import` | Login session lifecycle |
-| `workflow record / list / export-mcp` | Workflow session lifecycle |
+| `workflow record / list / export` | Workflow session lifecycle |
 | `mcp list / start / stop / status` | MCP server lifecycle |
+| `skill list / show / install / uninstall` | Generated-skill lifecycle; install/uninstall take `<skill_id> <agent>` (claude-code, codex, cline, opencode, agents) with optional `--project` |

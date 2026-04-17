@@ -1,4 +1,4 @@
-"""Regression tests for compiler/mcp/auth_adapter.py.
+"""Regression tests for compiler/runtime/auth_adapter.py.
 
 Critical invariants:
 - Generated auth.py must NOT contain the old /runtime/credentials/{profile_id} route.
@@ -18,7 +18,7 @@ _NOUI_ROOT = Path(__file__).resolve().parent.parent
 if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
-from compiler.mcp.auth_adapter import generate_auth_adapter
+from compiler.runtime.auth_adapter import generate_auth_adapter
 
 
 def _generated() -> str:

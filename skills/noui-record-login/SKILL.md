@@ -86,7 +86,7 @@ The CLI automatically created an App and a **Login** process in the extension (S
 Analyzes the captured session and writes:
 
 ```
-login_recordings/<session_id8>-bundle.json
+workbench/login_recordings/<session_id8>-bundle.json
 ```
 
 The bundle contains the application draft, service profile draft, inferred login steps, and review items.
@@ -96,7 +96,7 @@ The bundle contains the application draft, service profile draft, inferred login
 ## Step 5 — Review the Bundle
 
 ```bash
-.venv/bin/python cli/main.py login review login_recordings/noui-<session_id8>-bundle.json
+.venv/bin/python cli/main.py login review workbench/login_recordings/noui-<session_id8>-bundle.json
 ```
 
 Check the output for:
@@ -117,7 +117,7 @@ Tabby must be reachable at `TABBY_API_HOST` (default `http://localhost:8080`) an
 > **If Tabby is not yet running:** run `noui tabby start` then `noui tabby setup` (interactive) to start the service and provision agent credentials before registering. See `/noui-setup` for the full Tabby CLI reference.
 
 ```bash
-.venv/bin/python cli/main.py login register login_recordings/noui-<session_id8>-bundle.json
+.venv/bin/python cli/main.py login register workbench/login_recordings/noui-<session_id8>-bundle.json
 ```
 
 Provisions a Tabby Application and a STAGING ServiceProfile. On success:
@@ -128,7 +128,7 @@ Registered profile '<profile_id>'
   Version state    : STAGING
 ```
 
-**Record the `tabby_profile_id` value** — this is the `--profile` argument for `workflow export-mcp`.
+**Record the `tabby_profile_id` value** — this is the `--profile` argument for `workflow export --as mcp`.
 
 ---
 
@@ -137,7 +137,7 @@ Registered profile '<profile_id>'
 After registration, provide the login credentials (username/password) so that Tabby's browser worker can perform the automated login:
 
 ```bash
-.venv/bin/python cli/main.py login credentials login_recordings/noui-<session_id8>-bundle.json
+.venv/bin/python cli/main.py login credentials workbench/login_recordings/noui-<session_id8>-bundle.json
 ```
 
 The CLI will prompt interactively for:
@@ -157,7 +157,7 @@ Credentials are stored in:
 ## Step 8 — Validate the Profile
 
 ```bash
-.venv/bin/python cli/main.py login validate login_recordings/noui-<session_id8>-bundle.json
+.venv/bin/python cli/main.py login validate workbench/login_recordings/noui-<session_id8>-bundle.json
 ```
 
 Polls Tabby for up to 60 seconds waiting for the profile to reach HEALTHY state.
@@ -219,7 +219,7 @@ Runs export + review + register in one command (and optionally validate). Use on
 ## Output
 
 On completion you have:
-- `login_recordings/noui-<session_id8>-bundle.json`
+- `workbench/login_recordings/noui-<session_id8>-bundle.json`
 - `tabby_profile_id` — printed by `login register`
 - A live Tabby browser session confirmed via `tabby session ensure`
 
