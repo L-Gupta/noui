@@ -70,12 +70,12 @@ Record a browser workflow and compile it into a runnable FastMCP server. Support
 Path A (authenticated):
   start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
   → workflow captures (note capture_session_id)
-  → workflow export-mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
+  → workflow export --as mcp <session_id> --capture-session <capture_session_id> --profile <tabby_profile_id>
 
 Path B (unauthenticated / public API):
   start backend → workflow record → Chrome: Start Capture → perform workflow → Stop
   → workflow captures (note capture_session_id)
-  → workflow export-mcp <session_id> --capture-session <capture_session_id>
+  → workflow export --as mcp <session_id> --capture-session <capture_session_id>
 ```
 
 Output: `server_id` → used in `/noui-generalize` or `/noui-mcp`
@@ -128,5 +128,5 @@ All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` director
 |---|---|
 | `start` / `stop` / `status` | Backend lifecycle |
 | `login record / list / export / review / register / validate / import` | Login session lifecycle |
-| `workflow record / list / export-mcp` | Workflow session lifecycle |
+| `workflow record / list / export` | Workflow session lifecycle |
 | `mcp list / start / stop / status` | MCP server lifecycle |

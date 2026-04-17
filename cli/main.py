@@ -19,7 +19,7 @@ Subcommands:
     workflow record <name> <url>       - Create workflow session + print extension instructions
     workflow list                      - List workflow sessions
     workflow captures                  - List capture sessions recorded via the extension
-    workflow export-mcp <session_id>   - Compile workflow to FastMCP server
+    workflow export <session_id>       - Compile workflow to MCP, Skill, or both (--as mcp|skill|both)
 
     autopilot start-capture <name> <url> - Create sessions and start HAR/click capture
     autopilot stop-capture <wf> <cs>   - Stop capture, complete workflow, wait for HAR
@@ -33,6 +33,11 @@ Subcommands:
     mcp start <server_id>              - Start a generated MCP server
     mcp stop <server_id>               - Stop a generated MCP server
     mcp install <server_id> <agent>    - Install MCP server into agent config (claude-desktop, claude-code, codex, opencode)
+
+    skill list                         - List generated skills
+    skill show <skill_id>              - Print skill manifest + SKILL.md preview
+    skill install <skill_id>           - Copy skill to ~/.claude/skills/<skill_id>/ (or .claude/skills/ with --project)
+    skill uninstall <skill_id>         - Remove an installed skill
 
     tabby status                       - Check Docker Compose services and Tabby API liveness
     tabby start                        - Start Docker Compose infra and Tabby API
@@ -972,9 +977,8 @@ def cmd_workflow_record(args: argparse.Namespace) -> int:
     print(f"  3. Navigate to {start_url} and perform your workflow")
     print("  4. When done, click Complete in the extension")
     print()
-    print(
-        f"  Then run: {_bold(f'noui workflow export-mcp {session_id} --profile <tabby_profile_id>')}"
-    )
+    print(f"  Then run: {_bold(f'noui workflow export {session_id} --profile <tabby_profile_id>')}")
+    print("           (defaults to --as both; pass --as mcp or --as skill to pick one)")
     return 0
 
 
@@ -1051,20 +1055,28 @@ def cmd_workflow_captures(args: argparse.Namespace) -> int:  # noqa: ARG001
     return 0
 
 
-def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
-    """Compile workflow session to a FastMCP server."""
+def cmd_workflow_export(args: argparse.Namespace) -> int:
+    """Compile workflow session to an MCP server, a Skill, or both."""
     if not _backend_alive():
         print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
         return 1
 
     session_id: str = args.session_id
+    target: str = getattr(args, "target", "both")
     profile_id: str = getattr(args, "profile", "")
     profile_slug: str = getattr(args, "profile_slug", "")
     profile_db_id: str = getattr(args, "profile_db_id", "")
     capture_session_id: str = getattr(args, "capture_session", "")
+    description_override: str = getattr(args, "description_override", "")
     do_verify: bool = getattr(args, "verify", False)
 
-    params = []
+    if target not in ("mcp", "skill", "both"):
+        print(_red(f"Invalid --as {target!r}. Expected 'mcp', 'skill', or 'both'."))
+        return 2
+
+    from urllib.parse import quote_plus
+
+    params: list[str] = [f"as={target}"]
     if profile_id:
         params.append(f"tabby_profile_id={profile_id}")
     if profile_slug:
@@ -1073,11 +1085,15 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         params.append(f"profile_db_id={profile_db_id}")
     if capture_session_id:
         params.append(f"capture_session_id={capture_session_id}")
-    path = f"/workflow-sessions/{session_id}/export-mcp"
-    if params:
-        path += "?" + "&".join(params)
+    if description_override:
+        params.append(f"description_override={quote_plus(description_override)}")
+    path = f"/workflow-sessions/{session_id}/export?" + "&".join(params)
 
-    print(f"Exporting workflow {_cyan(session_id)} to MCP …", end=" ", flush=True)
+    print(
+        f"Exporting workflow {_cyan(session_id)} as {_bold(target)} …",
+        end=" ",
+        flush=True,
+    )
     try:
         result = _http("POST", path)
         assert isinstance(result, dict)
@@ -1087,38 +1103,60 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         print(_red(f"Export failed: {exc}"))
         return 1
 
-    server_id = result.get("server_id", "?")
-    tool_count = result.get("tool_count", len(result.get("tools", [])))
+    mcp_manifest = result.get("mcp") or {}
+    skill_manifest = result.get("skill") or {}
+
+    server_id = mcp_manifest.get("server_id", "")
+    skill_id = skill_manifest.get("skill_id", "")
 
     print()
-    print(_bold("MCP server generated:"))
-    print(f"  Server ID  : {_cyan(server_id)}")
-    print(f"  Tools      : {tool_count}")
-    auth_info = result.get("auth", {})
-    if auth_info.get("requires_auth"):
-        strategy = auth_info.get("strategy") or "tabby_credentials"
-        slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or ""
-        print(f"  Auth       : {strategy} (profile: {slug or '?'})")
-        if not slug:
-            print()
-            print(_yellow("  ⚠  This server requires auth but no profile was linked."))
-            print(
-                _yellow(
-                    f"     Re-export with: noui workflow export-mcp {session_id} --profile-slug <slug>"
+    if mcp_manifest:
+        tool_count = len(mcp_manifest.get("tools", []))
+        print(_bold("MCP server generated:"))
+        print(f"  Server ID  : {_cyan(server_id or '?')}")
+        print(f"  Tools      : {tool_count}")
+        auth_info = mcp_manifest.get("auth", {})
+        if auth_info.get("requires_auth"):
+            strategy = auth_info.get("strategy") or "tabby_credentials"
+            slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or ""
+            print(f"  Auth       : {strategy} (profile: {slug or '?'})")
+            if not slug:
+                print()
+                print(_yellow("  ⚠  This server requires auth but no profile was linked."))
+                print(
+                    _yellow(
+                        f"     Re-export with: noui workflow export {session_id} --as mcp --profile-slug <slug>"
+                    )
                 )
-            )
-            print(_yellow("     Available profiles: noui tabby session status"))
-    else:
-        print("  Auth       : none (public API)")
-    print()
+                print(_yellow("     Available profiles: noui tabby session status"))
+        else:
+            print("  Auth       : none (public API)")
+        print()
 
-    if do_verify and server_id != "?":
+    if skill_manifest:
+        op_count = len(skill_manifest.get("operations", []))
+        print(_bold("Skill generated:"))
+        print(f"  Skill ID   : {_cyan(skill_id or '?')}")
+        print(f"  Operations : {op_count}")
+        auth_info = skill_manifest.get("auth", {})
+        if auth_info.get("requires_auth"):
+            strategy = auth_info.get("strategy") or "tabby_credentials"
+            slug = auth_info.get("profile_slug") or ""
+            print(f"  Auth       : {strategy} (profile: {slug or '?'})")
+        else:
+            print("  Auth       : none (public API)")
+        print()
+
+    if do_verify and server_id:
         print(f"Running auth verification for {_cyan(server_id)} …")
         rc = _run_mcp_verify(server_id)
         if rc != 0:
             return rc
 
-    print(f"  Install: {_bold(f'noui mcp install {server_id} claude-code')}")
+    if server_id:
+        print(f"  Install MCP  : {_bold(f'noui mcp install {server_id} claude-code')}")
+    if skill_id:
+        print(f"  Install Skill: {_bold(f'noui skill install {skill_id}')}")
     return 0
 
 
@@ -1429,10 +1467,10 @@ def cmd_autopilot_export(args: argparse.Namespace) -> int:
     cs_id = args.capture_session_id
     profile_slug = getattr(args, "profile_slug", "")
 
-    params = [f"capture_session_id={cs_id}"]
+    params = [f"capture_session_id={cs_id}", "as=mcp"]
     if profile_slug:
         params.append(f"profile_slug={profile_slug}")
-    path = f"/workflow-sessions/{wf_id}/export-mcp?" + "&".join(params)
+    path = f"/workflow-sessions/{wf_id}/export?" + "&".join(params)
 
     print(f"Exporting workflow {_cyan(wf_id)} to MCP …", end=" ", flush=True)
     try:
@@ -1444,14 +1482,15 @@ def cmd_autopilot_export(args: argparse.Namespace) -> int:
         print(_red(f"Export failed: {exc}"))
         return 1
 
-    server_id = result.get("server_id", "?")
-    tool_count = result.get("tool_count", len(result.get("tools", [])))
+    mcp_manifest = result.get("mcp") or {}
+    server_id = mcp_manifest.get("server_id", "?")
+    tool_count = len(mcp_manifest.get("tools", []))
 
     print()
     print(_bold("MCP server generated:"))
     print(f"  Server ID  : {_cyan(server_id)}")
     print(f"  Tools      : {tool_count}")
-    auth_info = result.get("auth", {})
+    auth_info = mcp_manifest.get("auth", {})
     if auth_info.get("requires_auth"):
         strategy = auth_info.get("strategy") or "tabby_credentials"
         slug = auth_info.get("profile_slug") or "?"
@@ -2490,6 +2529,159 @@ def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
             elif var:
                 print(f"    → Set {var}=<value> in noui/.env")
     return 0 if result.status in ("PASS", "REPAIR_APPLIED") else 1
+
+
+# ---------------------------------------------------------------------------
+# skill subcommands
+# ---------------------------------------------------------------------------
+
+
+def _find_skill_manifest(skill_id: str) -> Path | None:
+    """Search workbench/skills/ for a manifest.json matching skill_id."""
+    if not SKILLS_DIR.exists():
+        return None
+    direct = SKILLS_DIR / skill_id / "manifest.json"
+    if direct.exists():
+        return direct
+    for manifest_path in SKILLS_DIR.rglob("manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get("skill_id") == skill_id:
+                return manifest_path
+        except Exception:
+            continue
+    return None
+
+
+def _skill_install_root(project: bool) -> Path:
+    if project:
+        return Path.cwd() / ".claude" / "skills"
+    return Path.home() / ".claude" / "skills"
+
+
+def cmd_skill_list(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """List generated skills under workbench/skills/."""
+    if not SKILLS_DIR.exists():
+        print(_yellow("No skills found (workbench/skills/ does not exist)."))
+        return 0
+
+    manifests = list(SKILLS_DIR.rglob("manifest.json"))
+    # Filter to skill manifests (schema_version 1 + runtime.type claude-code-skill)
+    skill_manifests: list[tuple[Path, dict]] = []
+    for mp in manifests:
+        try:
+            m = json.loads(mp.read_text())
+        except Exception:
+            continue
+        if m.get("runtime", {}).get("type") == "claude-code-skill":
+            skill_manifests.append((mp, m))
+
+    if not skill_manifests:
+        print(_yellow("No skill manifests found in workbench/skills/."))
+        return 0
+
+    print(_bold("Skills:"))
+    print()
+    header = f"  {'SKILL ID':<32} {'APP':<24} {'OPS':>4}  AUTH"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for _manifest_path, manifest in sorted(skill_manifests, key=lambda x: x[1].get("skill_id", "")):
+        skill_id = manifest.get("skill_id", "?")
+        app = manifest.get("app", {}).get("name", "?")
+        ops = len(manifest.get("operations", []))
+        auth = manifest.get("auth", {})
+        auth_str = (
+            f"{auth.get('strategy', 'tabby_credentials')} ({auth.get('profile_slug') or '?'})"
+            if auth.get("requires_auth")
+            else "public"
+        )
+        print(f"  {_cyan(skill_id):<32} {app:<24} {ops:>4}  {auth_str}")
+    print()
+    return 0
+
+
+def cmd_skill_show(args: argparse.Namespace) -> int:
+    """Print a skill's manifest and SKILL.md preview."""
+    skill_id: str = args.skill_id
+    manifest_path = _find_skill_manifest(skill_id)
+    if not manifest_path:
+        print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
+        return 1
+
+    skill_dir = manifest_path.parent
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to read manifest: {exc}"))
+        return 1
+
+    print(_bold(f"Skill: {_cyan(skill_id)}"))
+    print(f"  Path       : {skill_dir}")
+    print(f"  App        : {manifest.get('app', {}).get('name', '?')}")
+    print(f"  Operations : {len(manifest.get('operations', []))}")
+    auth = manifest.get("auth", {})
+    if auth.get("requires_auth"):
+        print(f"  Auth       : {auth.get('strategy')} (profile: {auth.get('profile_slug')})")
+    else:
+        print("  Auth       : none (public API)")
+    print()
+
+    skill_md = skill_dir / "SKILL.md"
+    if skill_md.exists():
+        body = skill_md.read_text(encoding="utf-8")
+        # Show frontmatter + first 20 lines of body
+        try:
+            fm_end = body.index("\n---\n", 4) + 5
+        except ValueError:
+            fm_end = 0
+        print(_bold("SKILL.md (frontmatter + preview):"))
+        head = body[:fm_end] + "\n".join(body[fm_end:].splitlines()[:20])
+        print(head)
+    return 0
+
+
+def cmd_skill_install(args: argparse.Namespace) -> int:
+    """Copy a generated skill into ~/.claude/skills/<skill_id>/ (or .claude/skills/ with --project)."""
+    import shutil
+
+    skill_id: str = args.skill_id
+    project: bool = getattr(args, "project", False)
+
+    manifest_path = _find_skill_manifest(skill_id)
+    if not manifest_path:
+        print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
+        return 1
+
+    src = manifest_path.parent
+    dest_root = _skill_install_root(project)
+    dest = dest_root / skill_id
+
+    dest_root.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)  # overwrite silently per plan
+    shutil.copytree(src, dest)
+
+    scope = "project (.claude/skills/)" if project else "global (~/.claude/skills/)"
+    print(_green(f"Installed {_cyan(skill_id)} to {scope}"))
+    print(f"  {dest}")
+    return 0
+
+
+def cmd_skill_uninstall(args: argparse.Namespace) -> int:
+    """Remove an installed skill from ~/.claude/skills/<skill_id>/ (or .claude/skills/)."""
+    import shutil
+
+    skill_id: str = args.skill_id
+    project: bool = getattr(args, "project", False)
+
+    dest = _skill_install_root(project) / skill_id
+    if not dest.exists():
+        print(_yellow(f"{skill_id!r} is not installed at {dest}"))
+        return 0
+    shutil.rmtree(dest)
+    print(_green(f"Uninstalled {_cyan(skill_id)} from {dest}"))
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -3605,8 +3797,15 @@ def _build_parser() -> argparse.ArgumentParser:
     wf_sub.add_parser("list", help="List workflow sessions")
     wf_sub.add_parser("captures", help="List capture sessions recorded via the extension")
 
-    wf_export = wf_sub.add_parser("export-mcp", help="Compile workflow session to FastMCP server")
+    wf_export = wf_sub.add_parser("export", help="Compile workflow session to MCP, Skill, or both")
     wf_export.add_argument("session_id", help="Workflow session ID")
+    wf_export.add_argument(
+        "--as",
+        dest="target",
+        default="both",
+        choices=["mcp", "skill", "both"],
+        help="Output format (default: both)",
+    )
     wf_export.add_argument(
         "--profile",
         default="",
@@ -3634,10 +3833,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Use HAR/clicks from an ABCD capture session instead of the workflow session",
     )
     wf_export.add_argument(
+        "--description-override",
+        default="",
+        metavar="TEXT",
+        dest="description_override",
+        help="Skill only: explicit SKILL.md description (skip the heuristic)",
+    )
+    wf_export.add_argument(
         "--verify",
         action="store_true",
         default=False,
-        help="Run auth verification after export; report PASS/NEEDS_SECRET before install",
+        help="Run auth verification after MCP export; report PASS/NEEDS_SECRET before install",
     )
 
     # --- mcp ---
@@ -3685,6 +3891,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show auth diagnosis and repair guidance for a compiled MCP server",
     )
     mcp_diagnose_p.add_argument("server_id", help="MCP server ID")
+
+    # --- skill ---
+    skill_parser = sub.add_parser("skill", help="Generated skill commands")
+    skill_sub = skill_parser.add_subparsers(dest="skill_command")
+
+    skill_sub.add_parser("list", help="List generated skills")
+
+    skill_show_p = skill_sub.add_parser("show", help="Print skill manifest + SKILL.md preview")
+    skill_show_p.add_argument("skill_id", help="Skill ID")
+
+    skill_install_p = skill_sub.add_parser(
+        "install", help="Install skill to ~/.claude/skills/<skill_id>/"
+    )
+    skill_install_p.add_argument("skill_id", help="Skill ID")
+    skill_install_p.add_argument(
+        "--project",
+        action="store_true",
+        help="Install to .claude/skills/ in the current project instead of ~/.claude/skills/",
+    )
+
+    skill_uninstall_p = skill_sub.add_parser("uninstall", help="Uninstall a skill")
+    skill_uninstall_p.add_argument("skill_id", help="Skill ID")
+    skill_uninstall_p.add_argument(
+        "--project",
+        action="store_true",
+        help="Remove from .claude/skills/ in the current project instead of ~/.claude/skills/",
+    )
 
     # --- autopilot ---
     ap_parser = sub.add_parser("autopilot", help="Autopilot recording commands")
@@ -3830,13 +4063,13 @@ def _dispatch_login(args: argparse.Namespace) -> int:
 def _dispatch_workflow(args: argparse.Namespace) -> int:
     cmd = getattr(args, "workflow_command", None)
     if cmd is None:
-        print("Usage: noui workflow {record,list,export-mcp}")
+        print("Usage: noui workflow {record,list,captures,export}")
         return 1
     dispatch = {
         "record": cmd_workflow_record,
         "list": cmd_workflow_list,
         "captures": cmd_workflow_captures,
-        "export-mcp": cmd_workflow_export_mcp,
+        "export": cmd_workflow_export,
     }
     fn = dispatch.get(cmd)
     if fn is None:
@@ -3863,6 +4096,24 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
     fn = dispatch.get(cmd)
     if fn is None:
         print(_red(f"Unknown mcp subcommand: {cmd}"))
+        return 1
+    return fn(args)
+
+
+def _dispatch_skill(args: argparse.Namespace) -> int:
+    cmd = getattr(args, "skill_command", None)
+    if cmd is None:
+        print("Usage: noui skill {list,show,install,uninstall}")
+        return 1
+    dispatch = {
+        "list": cmd_skill_list,
+        "show": cmd_skill_show,
+        "install": cmd_skill_install,
+        "uninstall": cmd_skill_uninstall,
+    }
+    fn = dispatch.get(cmd)
+    if fn is None:
+        print(_red(f"Unknown skill subcommand: {cmd}"))
         return 1
     return fn(args)
 
@@ -3962,6 +4213,7 @@ def main() -> None:
         "login": _dispatch_login,
         "workflow": _dispatch_workflow,
         "mcp": _dispatch_mcp,
+        "skill": _dispatch_skill,
         "autopilot": _dispatch_autopilot,
         "tabby": _dispatch_tabby,
     }

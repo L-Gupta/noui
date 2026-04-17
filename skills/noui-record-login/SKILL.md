@@ -128,7 +128,7 @@ Registered profile '<profile_id>'
   Version state    : STAGING
 ```
 
-**Record the `tabby_profile_id` value** — this is the `--profile` argument for `workflow export-mcp`.
+**Record the `tabby_profile_id` value** — this is the `--profile` argument for `workflow export --as mcp`.
 
 ---
 

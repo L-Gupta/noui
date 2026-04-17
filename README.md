@@ -224,7 +224,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 # 2. Record in Chrome (extension → Workflow Recording mode → perform workflow → Complete)
 
 # 3. Export as FastMCP server
-.venv/bin/python cli/main.py workflow export-mcp <session_id>
+.venv/bin/python cli/main.py workflow export --as mcp <session_id>
 
 # 4. Start the MCP server
 .venv/bin/python cli/main.py mcp start <server_id>
@@ -249,7 +249,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 # 3. Record and export the workflow
 .venv/bin/python cli/main.py workflow record "Create Contact" "https://app.hubspot.com"
 # (record in Chrome using Workflow Recording mode)
-.venv/bin/python cli/main.py workflow export-mcp <session_id> --profile <tabby_profile_id>
+.venv/bin/python cli/main.py workflow export --as mcp <session_id> --profile <tabby_profile_id>
 
 # 4. Start the MCP server
 .venv/bin/python cli/main.py mcp start <server_id>
@@ -285,7 +285,7 @@ noui login import <session_id> [--validate]
 
 noui workflow record <name> <url>      create workflow session
 noui workflow list / captures
-noui workflow export-mcp <session_id> [--profile <tabby_profile_id>]
+noui workflow export --as mcp <session_id> [--profile <tabby_profile_id>]
 
 noui mcp list / status / start / stop <server_id>
 
@@ -308,7 +308,7 @@ noui tabby session status / ensure [--profile] / stop
 | POST | `/workflow-sessions` | Create workflow session |
 | POST | `/workflow-sessions/{id}/start` | Start recording |
 | POST | `/workflow-sessions/{id}/complete` | Mark complete |
-| POST | `/workflow-sessions/{id}/export-mcp?tabby_profile_id=xxx` | Compile to FastMCP |
+| POST | `/workflow-sessions/{id}/export?as=mcp\|skill\|both` | Compile to FastMCP, Skill, or both |
 | POST | `/clicks` | Store click event |
 | POST | `/url-events` | Store URL navigation event |
 | POST | `/capture-sessions/{id}/har` | Upload HAR (extension compat) |

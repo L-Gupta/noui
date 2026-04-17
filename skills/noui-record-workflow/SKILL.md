@@ -1,6 +1,6 @@
 ---
 name: noui-record-workflow
-description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export-mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers authenticated (session-cookie via Tabby), static API-key, and unauthenticated sub-paths.
+description: Use this skill when the user wants to record a browser workflow and export it as a FastMCP server. Triggers on "record a workflow", "export as MCP", "generate a FastMCP server", "noui workflow record", "workflow export --as mcp", "capture a workflow", "turn a workflow into an MCP tool", "create an MCP server from a website", or "I want to automate this workflow". Covers authenticated (session-cookie via Tabby), static API-key, and unauthenticated sub-paths.
 ---
 
 # NoUI Record Workflow
@@ -30,7 +30,7 @@ The compiler auto-detects the strategy from the HAR (Authorization header + no S
 ## Critical Rules (Never Violate)
 
 - **ALWAYS** start the backend before asking the user to record
-- **NEVER** skip `workflow export-mcp` — recording alone produces no server
+- **NEVER** skip `workflow export --as mcp` — recording alone produces no server
 - For Path A/B: **ALWAYS** pass `--profile-slug <slug>` — this is the runtime credential identifier; without it auth falls back to unauthenticated
 - **NEVER** pass the DB UUID as `--profile-slug` — that is admin-only; use the human-readable slug (e.g. `adopt-bank`, not `8fdadf43-...`)
 - **ALWAYS** note the `server_id` printed after export — it is required for all `mcp` commands
@@ -116,7 +116,7 @@ Pass both the `session_id` (from Step 2) and the `capture_session_id` (from Step
 ### Path A — Session-cookie (tabby_credentials)
 
 ```bash
-.venv/bin/python cli/main.py workflow export-mcp <session_id> \
+.venv/bin/python cli/main.py workflow export --as mcp <session_id> \
   --capture-session <capture_session_id> \
   --profile-slug <app-slug> \
   --profile-db-id <tabby_profile_db_uuid> \
@@ -126,7 +126,7 @@ Pass both the `session_id` (from Step 2) and the `capture_session_id` (from Step
 ### Path B — Static API key (static_secret_header)
 
 ```bash
-.venv/bin/python cli/main.py workflow export-mcp <session_id> \
+.venv/bin/python cli/main.py workflow export --as mcp <session_id> \
   --capture-session <capture_session_id> \
   --profile-slug <app-slug> \
   --verify
@@ -137,7 +137,7 @@ The compiler detects the Bearer token in the HAR and automatically generates the
 ### Path C — Unauthenticated
 
 ```bash
-.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <capture_session_id>
+.venv/bin/python cli/main.py workflow export --as mcp <session_id> --capture-session <capture_session_id>
 ```
 
 The CLI compiles the captured HAR and click events into a FastMCP server and writes it to:
@@ -190,10 +190,10 @@ Start
     └─ get capture_session_id: workflow captures (match by project_id)
   │
   Step 4:
-    Path A: workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid> --verify
-    Path B: workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --verify
+    Path A: workflow export --as mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid> --verify
+    Path B: workflow export --as mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --verify
               └─ NEEDS_SECRET? → add <APP>_API_KEY to noui/.env → re-run --verify → PASS
-    Path C: workflow export-mcp <session_id> --capture-session <cap_id>
+    Path C: workflow export --as mcp <session_id> --capture-session <cap_id>
     └─ note server_id
   │
   Done → pass server_id to /mcp
@@ -210,10 +210,10 @@ Start
 | `.venv/bin/python cli/main.py workflow record "<Name>" "<url>"` | Create a workflow recording session |
 | `.venv/bin/python cli/main.py workflow list` | List existing workflow sessions |
 | `.venv/bin/python cli/main.py workflow captures` | List capture sessions recorded via the extension (use this to get `capture_session_id`) |
-| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
-| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug>` | Compile session → FastMCP server (authenticated, auto-detects strategy) |
-| `.venv/bin/python cli/main.py workflow export-mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid>` | As above, also records DB UUID for admin operations |
-| `.venv/bin/python cli/main.py workflow export-mcp ... --verify` | Run AuthVerifier immediately after export; reports PASS / NEEDS_SECRET |
+| `.venv/bin/python cli/main.py workflow export --as mcp <session_id> --capture-session <cap_id>` | Compile session → FastMCP server (unauthenticated) |
+| `.venv/bin/python cli/main.py workflow export --as mcp <session_id> --capture-session <cap_id> --profile-slug <slug>` | Compile session → FastMCP server (authenticated, auto-detects strategy) |
+| `.venv/bin/python cli/main.py workflow export --as mcp <session_id> --capture-session <cap_id> --profile-slug <slug> --profile-db-id <uuid>` | As above, also records DB UUID for admin operations |
+| `.venv/bin/python cli/main.py workflow export --as mcp ... --verify` | Run AuthVerifier immediately after export; reports PASS / NEEDS_SECRET |
 
 ---
 

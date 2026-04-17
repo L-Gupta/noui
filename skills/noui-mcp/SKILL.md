@@ -16,7 +16,7 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 ## Critical Rules (Never Violate)
 
 - **ALWAYS** run `mcp list` first to get the exact `server_id` before any other command
-- **NEVER** edit `server.py` or `manifest.json` directly — regenerate by re-running `workflow export-mcp`
+- **NEVER** edit `server.py` or `manifest.json` directly — regenerate by re-running `workflow export --as mcp`
 - When adding to `~/.claude.json`, **ALWAYS** use the absolute path to `.venv/bin/python` — not the system `python` or `python3`
 - **ALWAYS** restart Claude Code after editing `~/.claude.json` — the config is read at startup
 - You do **not** need to run `mcp start` separately when using the `~/.claude.json` stdio config — Claude Code launches the process automatically
@@ -173,10 +173,10 @@ Start
 | Server crashes immediately | Check `.mcp-<server_id>.log` in the server dir for Python errors |
 | Stale PID (shows running but is not) | `mcp stop <server_id>` clears stale PID; then `mcp start` again |
 | Claude Code does not see tools after adding to config | Confirm absolute paths are correct; restart Claude Code; run `/noui-mcp` to verify connection |
-| `server.py not found` error | Re-run `workflow export-mcp` for that session to regenerate the server |
+| `server.py not found` error | Re-run `workflow export --as mcp` for that session to regenerate the server |
 | Auth errors at runtime (authenticated server) | Run `mcp diagnose-auth <server_id>` — shows missing env vars and repair steps |
 | `NEEDS_SECRET <VAR>` from verify | Set `<VAR>=<value>` in `noui/.env` and re-run `mcp verify <server_id>` |
-| Server is v1 (no `auth_plan.json`) | Re-export with `workflow export-mcp ... --profile-slug <slug> --verify` to upgrade to v2 |
+| Server is v1 (no `auth_plan.json`) | Re-export with `workflow export --as mcp ... --profile-slug <slug> --verify` to upgrade to v2 |
 | Tool fails with "All connection attempts failed" | CDP-based server needs browser session — run `mcp status <server_id>` to check CDP, then `noui tabby session ensure` |
 | Tabby session shows HEALTHY but tools still fail | Worker crashed but DB state is stale — run `noui tabby session ensure` (auto-detects and restarts dead workers) |
-| Exported server has `profile_slug: null` | No `--profile-slug` was passed at export time — re-export: `workflow export-mcp <session_id> --profile-slug <slug>` |
+| Exported server has `profile_slug: null` | No `--profile-slug` was passed at export time — re-export: `workflow export --as mcp <session_id> --profile-slug <slug>` |

@@ -1,6 +1,6 @@
 """AuthVerifier — verify and repair auth before MCP installation.
 
-Runs after `workflow export-mcp`, before `mcp install`.
+Runs after `workflow export --as mcp` (or `--as both`), before `mcp install`.
 
 The verifier is deterministic-first: it attempts structured repairs in a known
 order before escalating to the LLM.  It only asks the LLM agent to make a
