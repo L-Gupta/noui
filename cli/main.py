@@ -156,6 +156,38 @@ def _pid_running(pid: int) -> bool:
         return False
 
 
+def _cdp_is_reachable(host: str = "localhost", port: int = 9222, timeout: float = 2.0) -> bool:
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _mark_session_terminated(session_id: str) -> None:
+    sql = f"UPDATE sessions SET state='TERMINATED' WHERE id='{session_id}'"
+    subprocess.run(
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "browser_hitl",
+            "-d",
+            "browser_hitl",
+            "-c",
+            sql,
+        ],
+        cwd=str(TABBY_DIR),
+        capture_output=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Backend HTTP helpers
 # ---------------------------------------------------------------------------
@@ -1063,8 +1095,17 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
     auth_info = result.get("auth", {})
     if auth_info.get("requires_auth"):
         strategy = auth_info.get("strategy") or "tabby_credentials"
-        slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or "?"
-        print(f"  Auth       : {strategy} (profile: {slug})")
+        slug = auth_info.get("profile_slug") or auth_info.get("tabby_profile_id") or ""
+        print(f"  Auth       : {strategy} (profile: {slug or '?'})")
+        if not slug:
+            print()
+            print(_yellow("  ⚠  This server requires auth but no profile was linked."))
+            print(
+                _yellow(
+                    f"     Re-export with: noui workflow export-mcp {session_id} --profile-slug <slug>"
+                )
+            )
+            print(_yellow("     Available profiles: noui tabby session status"))
     else:
         print("  Auth       : none (public API)")
     print()
@@ -1095,6 +1136,7 @@ def _run_mcp_verify(server_id: str) -> int:
         return 0
 
     try:
+        sys.path.insert(0, str(NOUI_DIR))
         from compiler.mcp.auth_verifier import verify_before_install
     except ImportError as exc:
         print(_red(f"  Cannot import auth_verifier: {exc}"))
@@ -1940,6 +1982,24 @@ def cmd_mcp_status(args: argparse.Namespace) -> int:
         print(f"  Status    : {_green(f'running (PID {pid})')}")
     else:
         print(f"  Status    : {_red('stopped')}")
+
+    # Check CDP accessibility for servers that use the browser-via-CDP pattern
+    ops_dir = manifest_path.parent / "operations"
+    uses_cdp = (
+        any(
+            "CDP_LIST_URL" in op_file.read_text(encoding="utf-8", errors="ignore")
+            for op_file in ops_dir.glob("*.py")
+        )
+        if ops_dir.exists()
+        else False
+    )
+    if uses_cdp:
+        if _cdp_is_reachable():
+            print(f"  CDP       : {_green('reachable (localhost:9222)')}")
+        else:
+            print(f"  CDP       : {_red('not reachable (localhost:9222)')}")
+            print(_yellow("             Run: noui tabby session ensure"))
+
     return 0
 
 
@@ -2397,6 +2457,7 @@ def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
     # Run verification
     print(_bold("Running verification …"))
     try:
+        sys.path.insert(0, str(NOUI_DIR))
         from compiler.mcp.auth_verifier import verify_before_install
 
         result = asyncio.run(verify_before_install(server_dir))
@@ -3301,8 +3362,14 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     sessions = _get_sessions(admin_token)
     healthy = [s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"]
     if healthy:
-        print(_green(f"✓ Session for '{profile_id}' is already HEALTHY"))
-        return 0
+        pid = _read_pid(TABBY_WORKER_PID_FILE)
+        if pid and _pid_running(pid) and _cdp_is_reachable():
+            print(_green(f"✓ Session for '{profile_id}' is already HEALTHY"))
+            return 0
+        # Worker has died but DB still shows HEALTHY — clear the stale state
+        _mark_session_terminated(healthy[0]["id"])
+        _clear_pid(TABBY_WORKER_PID_FILE)
+        print(_yellow("  Stale HEALTHY session detected (worker not running) — restarting …"))
 
     print(f"No HEALTHY session for '{_cyan(profile_id)}' — starting one …")
 
