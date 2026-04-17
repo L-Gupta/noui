@@ -28,7 +28,7 @@ When to pick which output:
 | `--as skill` | Long-tail / infrequent workflows; keeps Claude's context window clean until the intent matches |
 | `--as both` | Unsure. No extra recording work; just a second compile pass. Ship both and let usage decide. |
 
-The default is `--as both`. The rest of this skill focuses on the MCP output (auth verification, `mcp` lifecycle, etc.) because that is the longer-established path. For skill-side lifecycle (`skill list / show / install / uninstall`) invoke `/noui-skill` after export.
+The default is `--as both`. The rest of this skill focuses on the MCP output (auth verification, `mcp` lifecycle, etc.) because that is the longer-established path. For skill-side lifecycle (`skill list / show / install / uninstall`) invoke `/noui-generate-skill` after export.
 
 ---
 
@@ -184,7 +184,7 @@ MCP server generated:
   Output     : workbench/mcp_servers/<app_slug>/<server_id>/
 ```
 
-**Note the `server_id`** — pass it to `/noui-mcp` to start and connect the server.
+**Note the `server_id`** — pass it to `/noui-generate-mcp` to start and connect the server.
 
 > **Optional Step 5 — Generalize:** If the generated tools have unreadable raw API parameter names (`f_sid`, `bl`, `reqid`, `soc_app`), run `/noui-generalize`. Claude will read the tools, ask you questions about what you recorded, and rewrite the operations with natural-language parameters (`origin`, `destination`, `departure_date`) so they're usable by Claude Code.
 

@@ -1,5 +1,5 @@
 ---
-name: noui-mcp
+name: noui-generate-mcp
 description: Use this skill when the user wants to start, stop, check, or list generated NoUI MCP servers, or connect a server to Claude Code. Triggers on "start the MCP server", "run noui mcp", "connect to Claude Code", "add to mcpServers", "noui mcp start", "noui mcp list", "noui mcp status", "how do I use the generated server", or "I want to call this tool from Claude".
 ---
 
@@ -121,7 +121,7 @@ Add the server to `~/.claude.json` under `mcpServers`. Claude Code launches the 
 }
 ```
 
-After saving, **restart Claude Code**. The tools defined in the server will be available in Claude Code's tool list. You can verify by running `/noui-mcp` in Claude Code.
+After saving, **restart Claude Code**. The tools defined in the server will be available in Claude Code's tool list. You can verify by running `/noui-generate-mcp` in Claude Code.
 
 ---
 
@@ -172,7 +172,7 @@ Start
 | `MCP server '<id>' not found` | Run `mcp list` to get the exact `server_id` string |
 | Server crashes immediately | Check `.mcp-<server_id>.log` in the server dir for Python errors |
 | Stale PID (shows running but is not) | `mcp stop <server_id>` clears stale PID; then `mcp start` again |
-| Claude Code does not see tools after adding to config | Confirm absolute paths are correct; restart Claude Code; run `/noui-mcp` to verify connection |
+| Claude Code does not see tools after adding to config | Confirm absolute paths are correct; restart Claude Code; run `/noui-generate-mcp` to verify connection |
 | `server.py not found` error | Re-run `workflow export --as mcp` for that session to regenerate the server |
 | Auth errors at runtime (authenticated server) | Run `mcp diagnose-auth <server_id>` — shows missing env vars and repair steps |
 | `NEEDS_SECRET <VAR>` from verify | Set `<VAR>=<value>` in `noui/.env` and re-run `mcp verify <server_id>` |

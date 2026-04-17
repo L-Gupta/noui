@@ -1,6 +1,6 @@
 ---
-name: noui-skill
-description: Use this skill when the user wants to list, inspect, install, or uninstall generated NoUI Skills (produced by `workflow export --as skill`) for any supported agent — Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` convention. Triggers on "list skills", "noui skill list", "install the skill", "install this skill", "show skill", "noui skill install", "uninstall skill", "install skill for codex", "install skill for cline", "install skill for opencode", "use the generated skill from Claude Code", "add generated skill to an agent", "install to .agents/skills", or "where is my skill". Use /noui-mcp instead when the output is a FastMCP server, not a skill.
+name: noui-generate-skill
+description: Use this skill when the user wants to list, inspect, install, or uninstall generated NoUI Skills (produced by `workflow export --as skill`) for any supported agent — Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` convention. Triggers on "list skills", "noui skill list", "install the skill", "install this skill", "show skill", "noui skill install", "uninstall skill", "install skill for codex", "install skill for cline", "install skill for opencode", "use the generated skill from Claude Code", "add generated skill to an agent", "install to .agents/skills", or "where is my skill". Use /noui-generate-mcp instead when the output is a FastMCP server, not a skill.
 ---
 
 # NoUI Skill Lifecycle
@@ -19,7 +19,7 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 - **NEVER** edit a generated `SKILL.md` body to fix behaviour — regenerate with `workflow export --as skill [--description-override "..."]`. Hand-edits survive once, then get overwritten on the next re-export.
 - **ALWAYS** re-install after regenerating: `skill install <id>` overwrites the installed copy silently; that's the intended flow, not a conflict.
 - After `skill install`, the skill becomes discoverable in Claude Code when the user's next prompt matches the frontmatter `description`. **Unlike MCP, you do not need to restart Claude Code** — skills are picked up on demand.
-- **NEVER** install generated skills into `noui/skills/` (the source tree). That directory is for NoUI's own shipped agent skills (`noui-setup`, `noui-mcp`, `noui-skill`, etc.) — generated skills go to one of the agent-specific paths below, never back into this repo.
+- **NEVER** install generated skills into `noui/skills/` (the source tree). That directory is for NoUI's own shipped agent skills (`noui-setup`, `noui-generate-mcp`, `noui-generate-skill`, etc.) — generated skills go to one of the agent-specific paths below, never back into this repo.
 - **ALWAYS** pass the target agent as a positional argument: `skill install <id> <agent>`. It's not optional. Choose from `claude-code`, `codex`, `cline`, `opencode`, or `agents`.
 - To use the same skill in multiple agents, run `skill install` once per agent. Install is a copy, not a symlink, so each target gets its own independent directory.
 
@@ -126,13 +126,13 @@ Removes the skill from that specific agent's skills directory. If you installed 
 
 ---
 
-## When to use this skill vs `/noui-mcp`
+## When to use this skill vs `/noui-generate-mcp`
 
 | Situation | Use |
 |---|---|
-| Output is a FastMCP server (`workflow export --as mcp`) | `/noui-mcp` |
-| Output is a Claude Code skill (`workflow export --as skill`) | `/noui-skill` (this skill) |
-| Both were exported (`--as both`) | Both skills — `/noui-mcp` for the server, `/noui-skill` for the skill |
+| Output is a FastMCP server (`workflow export --as mcp`) | `/noui-generate-mcp` |
+| Output is a Claude Code skill (`workflow export --as skill`) | `/noui-generate-skill` (this skill) |
+| Both were exported (`--as both`) | Both skills — `/noui-generate-mcp` for the server, `/noui-generate-skill` for the skill |
 
 ---
 

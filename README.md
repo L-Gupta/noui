@@ -209,7 +209,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 | `/noui-record-login` | Record a login flow and register it with Tabby |
 | `/noui-record-workflow` | Record a workflow and export it as a FastMCP server |
 | `/noui-generalize` | Rename raw API parameters to natural-language equivalents post-export |
-| `/noui-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
+| `/noui-generate-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
 
 ------------------------------------------------------------------------
 

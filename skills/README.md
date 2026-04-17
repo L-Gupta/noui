@@ -16,7 +16,7 @@ Or install a specific skill only:
 npx skills add adoptai/noui -s setup
 ```
 
-`npx skills add` installs these NoUI meta-skills to `.agents/skills/` in your current project by default; they become available as slash commands immediately. (That's the Vercel Labs convention. **Generated** skills produced by `workflow export --as skill` are a separate thing — they're managed via `noui skill install <id> <agent>` and can target Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` path. See `/noui-skill` for details.)
+`npx skills add` installs these NoUI meta-skills to `.agents/skills/` in your current project by default; they become available as slash commands immediately. (That's the Vercel Labs convention. **Generated** skills produced by `workflow export --as skill` are a separate thing — they're managed via `noui skill install <id> <agent>` and can target Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` path. See `/noui-generate-skill` for details.)
 
 ## Skills
 
@@ -78,7 +78,7 @@ Path B (unauthenticated / public API):
   → workflow export --as mcp <session_id> --capture-session <capture_session_id>
 ```
 
-Output: `server_id` → used in `/noui-generalize` or `/noui-mcp`
+Output: `server_id` → used in `/noui-generalize` or `/noui-generate-mcp`
 
 ---
 
@@ -102,13 +102,13 @@ Phase 2-4: Read tools → ask user about workflow → rewrite params one tool at
 Phase 5: Test, iterate, restart Claude Code
 ```
 
-Output: working tools with natural-language interfaces → used in `/noui-mcp`
+Output: working tools with natural-language interfaces → used in `/noui-generate-mcp`
 
 ---
 
 ### Phase 4 — MCP Server Management
 
-#### `/noui-mcp`
+#### `/noui-generate-mcp`
 
 Start, stop, list, and connect generated FastMCP servers to Claude Code.
 
@@ -122,7 +122,7 @@ mcp stop <server_id>        → stop server
 
 ### Phase 4 (alt) — Skill Management
 
-#### `/noui-skill`
+#### `/noui-generate-skill`
 
 List, inspect, install, and uninstall generated Claude Code skills.
 Use when `workflow export` was run with `--as skill` or `--as both`.

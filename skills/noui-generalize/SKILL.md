@@ -23,7 +23,7 @@ The generalization logic is identical for either output format:
 
 The Phase 0 execution diagnosis (bot detection, empty credentials, profile promotion) applies to both outputs unchanged — both runtimes share the same `noui_runtime/auth.py` and the same Tabby credential flow.
 
-After generalizing a skill, use `/noui-skill` (not `/noui-mcp`) for install / test.
+After generalizing a skill, use `/noui-generate-skill` (not `/noui-generate-mcp`) for install / test.
 
 ---
 
@@ -442,4 +442,4 @@ Start
 
 - `/noui-record-login` — Record login and register with Tabby (run first for authenticated sites)
 - `/noui-record-workflow` — Record and export the workflow (run first to generate the server)
-- `/noui-mcp` — Server lifecycle after generalization (start/stop/connect to Claude Code)
+- `/noui-generate-mcp` — Server lifecycle after generalization (start/stop/connect to Claude Code)
