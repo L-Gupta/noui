@@ -1,0 +1,35 @@
+{
+  "profile_slug": "expedia",
+  "profile_db_id": "c2555a7e-7eb1-4945-bf8d-f5727c897831",
+  "strategy": "tabby_credentials",
+  "target_domains": [
+    "www.expedia.com"
+  ],
+  "required_auth": {
+    "headers": [],
+    "cookies": [
+      "JSESSION",
+      "session_id",
+      "EG_SESSIONTOKEN",
+      "_uetsid",
+      "QSI_HistorySession",
+      "QuantumMetricSessionID"
+    ]
+  },
+  "observed_workflow_headers": {},
+  "tabby_export": {
+    "credential_types": {
+      "headers": [],
+      "cookies": [
+        "JSESSION",
+        "session_id",
+        "EG_SESSIONTOKEN",
+        "_uetsid",
+        "QSI_HistorySession",
+        "QuantumMetricSessionID"
+      ]
+    },
+    "runtime_identifier": "expedia"
+  },
+  "fallbacks": []
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": "1",
+  "skill_id": "expedia-stay-search",
+  "app": {
+    "name": "Expedia Stay Search",
+    "slug": "expedia-stay-search"
+  },
+  "workflow": {
+    "id": "expedia-stay-search-ed6adb15",
+    "name": "Expedia Stay Search",
+    "workflow_session_id": "ed6adb15-95f3-44c2-9f6a-23eef19078dc"
+  },
+  "auth": {
+    "requires_auth": true,
+    "profile_slug": "expedia",
+    "profile_db_id": "c2555a7e-7eb1-4945-bf8d-f5727c897831",
+    "strategy": "tabby_credentials",
+    "auth_plan_file": "auth_plan.json"
+  },
+  "runtime": {
+    "type": "claude-code-skill",
+    "entrypoint": "SKILL.md",
+    "operation_style": "subprocess-cli",
+    "python": ">=3.11"
+  },
+  "operations": [
+    {
+      "name": "search_hotels",
+      "description": "Search Expedia for hotels by destination and dates. Returns listings with pricing, ratings, and URLs.",
+      "module": "operations/search_hotels.py",
+      "entry": "execute",
+      "args": [
+        {"name": "destination", "type": "string", "required": true},
+        {"name": "check_in", "type": "string", "required": true},
+        {"name": "check_out", "type": "string", "required": true},
+        {"name": "guests", "type": "integer", "required": false, "default": 2},
+        {"name": "rooms", "type": "integer", "required": false, "default": 1}
+      ]
+    }
+  ],
+  "artifacts": {
+    "skill_file": "SKILL.md",
+    "files": [
+      "SKILL.md",
+      "manifest.json",
+      "auth_plan.json",
+      "API.md",
+      "operations/search_hotels.py",
+      "noui_runtime/auth.py",
+      "noui_runtime/__init__.py",
+      "operations/__init__.py"
+    ],
+    "api_docs_file": "API.md"
+  },
+  "generation": {
+    "generated_at": "2026-04-17T00:00:00Z",
+    "generator": "noui",
+    "generator_version": "v2-skill-sample",
+    "source_mcp_server": "expedia-stay-search-ed6adb15"
+  }
+}
