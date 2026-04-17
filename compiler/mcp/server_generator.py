@@ -23,9 +23,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from compiler.mcp.api_doc_generator import generate_api_markdown
-from compiler.mcp.auth_adapter import generate_auth_adapter
 from compiler.mcp.auth_plan import generate_auth_plan
 from compiler.mcp.har_to_tools import har_to_tool_defs
+from compiler.runtime.auth_adapter import generate_auth_adapter
 
 # ---------------------------------------------------------------------------
 # Public API

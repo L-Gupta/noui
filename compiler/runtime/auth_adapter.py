@@ -1,8 +1,16 @@
-"""Generate the noui_runtime/auth.py source code for a compiled MCP server.
+"""Generate the noui_runtime/auth.py source code for a compiled MCP server or Skill.
 
 Pure functions — no web framework or DB dependencies.
-The generated auth.py is written into the MCP server's output directory so each
-server carries its own copy with the correct Tabby host baked in.
+
+The same generated module is written into both output formats:
+
+  - MCP server:  workbench/mcp_servers/<app>/<server>/noui_runtime/auth.py
+  - Skill:       workbench/skills/<app>/<skill>/noui_runtime/auth.py
+                 (and, after install, ~/.claude/skills/<skill>/noui_runtime/auth.py)
+
+To work in all three locations without per-output special-casing, the generated
+auth.py discovers `.env` via a portable walk-up from its own file location,
+with env-var override and sensible home-dir fallbacks.
 """
 
 from __future__ import annotations
@@ -27,7 +35,18 @@ def generate_auth_adapter(tabby_api_host: str) -> str:
         Python source code string for noui_runtime/auth.py.
     """
     return f'''\
-"""NoUI runtime auth adapter — resolves live credentials from Tabby or static secrets."""
+"""NoUI runtime auth adapter — resolves live credentials from Tabby or static secrets.
+
+Shared across MCP-server and Skill output formats. Locates `.env` via:
+  1. $NOUI_ENV_FILE — explicit override
+  2. Walk up to 7 parents from this file looking for a `.env` (works both for
+     in-repo layouts like workbench/mcp_servers/<app>/<server>/noui_runtime/
+     and workbench/skills/<app>/<skill>/noui_runtime/, where noui/.env is
+     a few parents up)
+  3. ~/.config/noui/.env, then ~/.noui/.env (for skills installed outside
+     the noui checkout, e.g. ~/.claude/skills/<skill>/)
+  4. Skip dotenv load — rely on already-exported env vars.
+"""
 from __future__ import annotations
 
 import json
@@ -37,16 +56,38 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-# Load noui/.env — auth.py is at noui_runtime/ inside the server dir:
-# parents: [0]=noui_runtime, [1]=<server_id>, [2]=<app_slug>, [3]=mcp_servers, [4]=workbench, [5]=noui
-_env_path = Path(__file__).resolve().parents[5] / ".env"
-load_dotenv(_env_path)
 
-TABBY_API_HOST = os.environ.get("TABBY_API_URL", os.environ.get("TABBY_API_HOST", "{tabby_api_host}"))
+def _find_env_file() -> Path | None:
+    override = os.environ.get("NOUI_ENV_FILE")
+    if override:
+        p = Path(override).expanduser()
+        if p.is_file():
+            return p
+
+    here = Path(__file__).resolve()
+    for parent in [here, *here.parents][:8]:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return candidate
+
+    for fallback in (Path.home() / ".config" / "noui" / ".env", Path.home() / ".noui" / ".env"):
+        if fallback.is_file():
+            return fallback
+
+    return None
+
+
+_env_file = _find_env_file()
+if _env_file is not None:
+    load_dotenv(_env_file)
+
+TABBY_API_HOST = os.environ.get(
+    "TABBY_API_URL", os.environ.get("TABBY_API_HOST", "{tabby_api_host}")
+)
 TABBY_CLIENT_ID = os.environ.get("TABBY_CLIENT_ID", "")
 TABBY_CLIENT_SECRET = os.environ.get("TABBY_CLIENT_SECRET", "")
 
-# auth_plan.json lives at the server root (one level up from noui_runtime/)
+# auth_plan.json lives at the output root (one level up from noui_runtime/)
 _AUTH_PLAN_PATH = Path(__file__).resolve().parent.parent / "auth_plan.json"
 
 
@@ -64,15 +105,19 @@ async def _get_agent_token() -> str:
     if not TABBY_CLIENT_ID or not TABBY_CLIENT_SECRET:
         raise RuntimeError(
             "Missing TABBY_CLIENT_ID or TABBY_CLIENT_SECRET.\\n"
-            "Run `noui tabby setup` or set these vars in noui/.env"
+            "Run `noui tabby setup` or set these vars in noui/.env "
+            "(or ~/.config/noui/.env for skills installed outside the noui checkout)."
         )
     url = f"{{TABBY_API_HOST}}/auth/agent-token"
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json={{
-            "client_id": TABBY_CLIENT_ID,
-            "client_secret": TABBY_CLIENT_SECRET,
-            "grant_type": "client_credentials",
-        }})
+        resp = await client.post(
+            url,
+            json={{
+                "client_id": TABBY_CLIENT_ID,
+                "client_secret": TABBY_CLIENT_SECRET,
+                "grant_type": "client_credentials",
+            }},
+        )
         resp.raise_for_status()
         data = resp.json()
     return data.get("access_token") or data.get("token", "")
@@ -93,7 +138,6 @@ async def _tabby_credentials(profile_slug: str) -> dict:
         )
         resp.raise_for_status()
         data = resp.json()
-    # Credentials may be at top level or nested under "credentials"
     credentials = data.get("credentials", data)
     headers: dict[str, str] = {{}}
     for h in credentials.get("headers", []):
@@ -123,14 +167,13 @@ def _static_secret_headers(plan: dict) -> dict:
                 f"Missing required secret {{env_var}} for {{header_name}} header.\\n"
                 f"Set {{env_var}} in noui/.env or export it in your shell."
             )
-        # Replace ${{ENV_VAR}} placeholder in template
         placeholder = "${{" + env_var + "}}"
         headers[header_name] = value_template.replace(placeholder, secret)
     return headers
 
 
 async def resolve_auth() -> dict:
-    """Resolve auth headers/cookies for this server based on auth_plan.json.
+    """Resolve auth headers/cookies for this server or skill based on auth_plan.json.
 
     Returns a dict of {{header_name: header_value}} ready to pass to httpx.
     Raises RuntimeError with a human-readable diagnostic on failure.
@@ -143,7 +186,8 @@ async def resolve_auth() -> dict:
         if not profile_slug:
             raise RuntimeError(
                 "auth_plan.json missing profile_slug — "
-                "regenerate with `noui workflow export-mcp --profile-slug <slug>`"
+                "regenerate with `noui workflow export --as mcp --profile-slug <slug>` "
+                "(or `--as skill`, `--as both`)."
             )
         creds = await _tabby_credentials(profile_slug)
         required = plan.get("required_auth", {{}}).get("headers", [])
@@ -151,7 +195,8 @@ async def resolve_auth() -> dict:
             raise RuntimeError(
                 f"Tabby returned empty credentials for profile {{profile_slug!r}}.\\n"
                 f"Required headers: {{required}}\\n"
-                f"Run `noui mcp diagnose-auth <server_id>` for repair guidance."
+                f"Run `noui mcp diagnose-auth <server_id>` for repair guidance "
+                f"(MCP servers) or verify the Tabby profile is ACTIVE (skills)."
             )
         return creds
 
@@ -161,13 +206,14 @@ async def resolve_auth() -> dict:
     else:
         raise RuntimeError(
             f"Unknown auth strategy {{strategy!r}} in auth_plan.json.\\n"
-            f"Regenerate this server with `noui workflow export-mcp`."
+            f"Regenerate this output with `noui workflow export --as mcp|skill|both`."
         )
 
 
 # ---------------------------------------------------------------------------
 # Legacy compatibility — servers generated before auth_plan.json was introduced
 # ---------------------------------------------------------------------------
+
 
 async def get_auth_headers(profile_id: str) -> dict:
     """Deprecated: prefer resolve_auth().
