@@ -288,7 +288,9 @@ noui workflow list / captures
 noui workflow export <session_id> --as {mcp|skill|both} [--profile <tabby_profile_id>]
 
 noui mcp list / status / start / stop <server_id>
-noui skill list / show / install / uninstall <skill_id>
+noui skill list / show
+noui skill install   <skill_id> <agent> [--project]    # agent: claude-code|codex|cline|opencode|agents
+noui skill uninstall <skill_id> <agent> [--project]
 
 noui tabby status / start / stop [--infra]
 noui tabby setup [--profiles <id...>] [--force]

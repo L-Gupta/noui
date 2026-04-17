@@ -16,7 +16,7 @@ Or install a specific skill only:
 npx skills add adoptai/noui -s setup
 ```
 
-Skills install to `.agents/skills/` in your current project and become available as slash commands immediately.
+`npx skills add` installs these NoUI meta-skills to `.agents/skills/` in your current project by default; they become available as slash commands immediately. (That's the Vercel Labs convention. **Generated** skills produced by `workflow export --as skill` are a separate thing — they're managed via `noui skill install <id> <agent>` and can target Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` path. See `/noui-skill` for details.)
 
 ## Skills
 
@@ -146,4 +146,4 @@ All commands: `.venv/bin/python cli/main.py <command>` from the `noui/` director
 | `login record / list / export / review / register / validate / import` | Login session lifecycle |
 | `workflow record / list / export` | Workflow session lifecycle |
 | `mcp list / start / stop / status` | MCP server lifecycle |
-| `skill list / show / install / uninstall` | Generated-skill lifecycle |
+| `skill list / show / install / uninstall` | Generated-skill lifecycle; install/uninstall take `<skill_id> <agent>` (claude-code, codex, cline, opencode, agents) with optional `--project` |

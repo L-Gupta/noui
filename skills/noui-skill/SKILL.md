@@ -1,6 +1,6 @@
 ---
 name: noui-skill
-description: Use this skill when the user wants to list, inspect, install, or uninstall generated NoUI Skills (Claude Code skills produced by `workflow export --as skill`). Triggers on "list skills", "noui skill list", "install the skill", "install this skill", "show skill", "noui skill install", "uninstall skill", "use the generated skill from Claude Code", "add generated skill to Claude Code", or "where is my skill". Use /noui-mcp instead when the output is a FastMCP server, not a skill.
+description: Use this skill when the user wants to list, inspect, install, or uninstall generated NoUI Skills (produced by `workflow export --as skill`) for any supported agent — Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` convention. Triggers on "list skills", "noui skill list", "install the skill", "install this skill", "show skill", "noui skill install", "uninstall skill", "install skill for codex", "install skill for cline", "install skill for opencode", "use the generated skill from Claude Code", "add generated skill to an agent", "install to .agents/skills", or "where is my skill". Use /noui-mcp instead when the output is a FastMCP server, not a skill.
 ---
 
 # NoUI Skill Lifecycle
@@ -19,7 +19,9 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 - **NEVER** edit a generated `SKILL.md` body to fix behaviour — regenerate with `workflow export --as skill [--description-override "..."]`. Hand-edits survive once, then get overwritten on the next re-export.
 - **ALWAYS** re-install after regenerating: `skill install <id>` overwrites the installed copy silently; that's the intended flow, not a conflict.
 - After `skill install`, the skill becomes discoverable in Claude Code when the user's next prompt matches the frontmatter `description`. **Unlike MCP, you do not need to restart Claude Code** — skills are picked up on demand.
-- **NEVER** install generated skills into `noui/skills/` (the source tree). That directory is for NoUI's own shipped agent skills (`noui-setup`, `noui-mcp`, `noui-skill`, etc.) — generated skills go to `~/.claude/skills/` (global) or `.claude/skills/` (project).
+- **NEVER** install generated skills into `noui/skills/` (the source tree). That directory is for NoUI's own shipped agent skills (`noui-setup`, `noui-mcp`, `noui-skill`, etc.) — generated skills go to one of the agent-specific paths below, never back into this repo.
+- **ALWAYS** pass the target agent as a positional argument: `skill install <id> <agent>`. It's not optional. Choose from `claude-code`, `codex`, `cline`, `opencode`, or `agents`.
+- To use the same skill in multiple agents, run `skill install` once per agent. Install is a copy, not a symlink, so each target gets its own independent directory.
 
 ---
 
@@ -56,49 +58,71 @@ Prints the manifest summary (app, operation count, auth strategy) and the first 
 
 ## Step 3 — Install
 
-```bash
-# Global (all projects):
-.venv/bin/python cli/main.py skill install <skill_id>
+Pass the target agent as the second positional argument. Default is Global scope; add `--project` to install into the current project's skills directory instead.
 
-# Project-scoped (only this project):
-.venv/bin/python cli/main.py skill install <skill_id> --project
+```bash
+# Claude Code, global (most common):
+.venv/bin/python cli/main.py skill install <skill_id> claude-code
+
+# Codex, project-scoped (→ .agents/skills/ in the current project):
+.venv/bin/python cli/main.py skill install <skill_id> codex --project
+
+# Shared .agents/skills/ convention (covers Codex, OpenCode, npx-skills-managed tools):
+.venv/bin/python cli/main.py skill install <skill_id> agents
 ```
 
-Copies the skill tree from `workbench/skills/<skill_id>/` to:
+### Per-agent install paths
 
-- Global: `~/.claude/skills/<skill_id>/`
-- Project: `.claude/skills/<skill_id>/` in the current directory
+| `<agent>` | Global (default) | Project (`--project`) | Source |
+|---|---|---|---|
+| `claude-code` | `~/.claude/skills/<id>/` | `.claude/skills/<id>/` | Claude Code docs |
+| `codex` | `~/.agents/skills/<id>/` | `.agents/skills/<id>/` | Codex skills docs (`.agents/skills/` is canonical) |
+| `cline` | `~/.cline/skills/<id>/` | `.cline/skills/<id>/` | Cline skills docs |
+| `opencode` | `~/.config/opencode/skills/<id>/` | `.opencode/skills/<id>/` | OpenCode docs |
+| `agents` | `~/.agents/skills/<id>/` | `.agents/skills/<id>/` | Shared convention — same on-disk path as `codex`, documented separately for clarity |
 
-Re-installing a skill with the same `skill_id` **overwrites silently** — that's the re-export → re-install flow by design.
+**Re-installing** a skill with the same `skill_id` + same agent + same scope **overwrites silently** — that's the re-export → re-install flow by design.
+
+### Choosing an agent
+
+- **User just asked "install the skill"**: pick `claude-code` if you're working in Claude Code; otherwise ask.
+- **User mentioned a runtime by name** (Codex, Cline, OpenCode): pass that name.
+- **User wants one install that multiple tools pick up**: use `agents`. Works for Codex, OpenCode, and anything in the Vercel Labs `npx skills` ecosystem. Does **not** work for Claude Code or Cline — they read only from their own paths.
 
 ---
 
-## Step 4 — Use from Claude Code
+## Step 4 — Use from the Agent
 
-After installation, Claude Code will load the skill automatically the next time a user prompt matches the frontmatter `description`. No restart required.
+After installation, the target agent loads the skill automatically the next time a user prompt matches the frontmatter `description`. **No restart required** for any of the supported agents — they all do on-demand discovery.
 
-To test the skill independently of Claude Code (useful for debugging auth or operation logic):
+To test the skill independently (useful for debugging auth or operation logic), run the operation script directly from whichever install path you picked:
 
 ```bash
-# Run an operation directly; it prints JSON to stdout
-cd ~/.claude/skills/<skill_id>       # or .claude/skills/<skill_id> for project-scoped
+# Example: Claude Code global install
+cd ~/.claude/skills/<skill_id>
 python operations/<op_name>.py --help
 python operations/<op_name>.py --arg value --another-arg value
+
+# Example: project-scoped install for Codex
+cd .agents/skills/<skill_id>
+python operations/<op_name>.py --help
 ```
 
-For authenticated skills: export `TABBY_CLIENT_ID` / `TABBY_CLIENT_SECRET` first (from `noui/.env`, `~/.config/noui/.env`, or your shell), and ensure a Tabby session is live (`tabby session ensure --profile <slug>`).
+For authenticated skills: export `TABBY_CLIENT_ID` / `TABBY_CLIENT_SECRET` first (from `noui/.env`, `~/.config/noui/.env`, or your shell), and ensure a Tabby session is live (`tabby session ensure --profile <slug>`). The runtime walks up from its own file looking for a `.env`, so installs at arbitrary depths work.
 
 ---
 
 ## Step 5 — Uninstall
 
+Mirror the install command — pass the same agent and scope you used to install:
+
 ```bash
-.venv/bin/python cli/main.py skill uninstall <skill_id>
-# or, project scope:
-.venv/bin/python cli/main.py skill uninstall <skill_id> --project
+.venv/bin/python cli/main.py skill uninstall <skill_id> <agent>
+# or project scope:
+.venv/bin/python cli/main.py skill uninstall <skill_id> <agent> --project
 ```
 
-Removes `~/.claude/skills/<skill_id>/` (or `.claude/skills/<skill_id>/`). The source under `workbench/skills/` is untouched — re-install any time.
+Removes the skill from that specific agent's skills directory. If you installed to multiple agents, run `skill uninstall` once per agent. The source under `workbench/skills/` is untouched — re-install any time.
 
 ---
 
@@ -122,7 +146,10 @@ Removes `~/.claude/skills/<skill_id>/` (or `.claude/skills/<skill_id>/`). The so
 | Operation fails with `Missing TABBY_CLIENT_ID` | Set `TABBY_CLIENT_ID` / `TABBY_CLIENT_SECRET` in `noui/.env` or `~/.config/noui/.env`; the installed skill's runtime walks up from its own file to find these |
 | Operation fails with `Tabby returned empty credentials` | The Tabby session worker isn't live. Run `tabby session ensure --profile <slug>` |
 | Operation fails with 429 / bot detection | Rewrite the operation to use CDP browser-side `fetch()` — run `/noui-generalize` |
-| Need to pass a different Tabby profile for testing | Regenerate with `workflow export --as skill --profile-slug <other-slug>`, then `skill install <id>` — re-exporting with a different slug updates `auth_plan.json` |
+| Need to pass a different Tabby profile for testing | Regenerate with `workflow export --as skill --profile-slug <other-slug>`, then re-install — re-exporting with a different slug updates `auth_plan.json` |
+| Installed to `codex` but Claude Code can't see the skill | Expected. Claude Code doesn't read `.agents/skills/`. Run `skill install <id> claude-code` too. |
+| Installed to `agents` but Cline can't see the skill | Expected. Cline's docs only list `.cline/skills/` and `.claude/skills/` as discovery paths. Run `skill install <id> cline` too. |
+| Don't know which agent the user runs | Ask. Most Claude Code users will want `claude-code`; users who mention Codex / OpenCode / Vercel's `npx skills` typically want `agents`. |
 
 ---
 
@@ -132,6 +159,6 @@ Removes `~/.claude/skills/<skill_id>/` (or `.claude/skills/<skill_id>/`). The so
 |---|---|
 | `skill list` | List generated skills under `workbench/skills/` |
 | `skill show <skill_id>` | Print manifest + SKILL.md preview for a skill |
-| `skill install <skill_id> [--project]` | Install to `~/.claude/skills/` or `.claude/skills/` |
-| `skill uninstall <skill_id> [--project]` | Remove installed skill |
+| `skill install <skill_id> <agent> [--project]` | Install to the agent's skills directory. Agent: `claude-code`, `codex`, `cline`, `opencode`, `agents`. |
+| `skill uninstall <skill_id> <agent> [--project]` | Remove from the agent's skills directory. Mirror the install args. |
 | `workflow export --as skill <session_id> ...` | Regenerate a skill from a recorded workflow (invoke via `/noui-record-workflow`) |

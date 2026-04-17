@@ -36,8 +36,8 @@ Subcommands:
 
     skill list                         - List generated skills
     skill show <skill_id>              - Print skill manifest + SKILL.md preview
-    skill install <skill_id>           - Copy skill to ~/.claude/skills/<skill_id>/ (or .claude/skills/ with --project)
-    skill uninstall <skill_id>         - Remove an installed skill
+    skill install <skill_id> <agent>   - Copy skill to an agent's skills dir (claude-code|codex|cline|opencode|agents); add --project for project-scoped path
+    skill uninstall <skill_id> <agent> - Remove an installed skill (use --project for project-scoped)
 
     tabby status                       - Check Docker Compose services and Tabby API liveness
     tabby start                        - Start Docker Compose infra and Tabby API
@@ -1156,7 +1156,10 @@ def cmd_workflow_export(args: argparse.Namespace) -> int:
     if server_id:
         print(f"  Install MCP  : {_bold(f'noui mcp install {server_id} claude-code')}")
     if skill_id:
-        print(f"  Install Skill: {_bold(f'noui skill install {skill_id}')}")
+        print(
+            f"  Install Skill: {_bold(f'noui skill install {skill_id} <agent>')}"
+            "  (agent: claude-code | codex | cline | opencode | agents; add --project for project scope)"
+        )
     return 0
 
 
@@ -2553,10 +2556,34 @@ def _find_skill_manifest(skill_id: str) -> Path | None:
     return None
 
 
-def _skill_install_root(project: bool) -> Path:
-    if project:
-        return Path.cwd() / ".claude" / "skills"
-    return Path.home() / ".claude" / "skills"
+SKILL_AGENTS = ("claude-code", "codex", "cline", "opencode", "agents")
+
+
+def _skill_install_root(agent: str, project: bool) -> Path:
+    """Return the skills directory for a given agent + scope.
+
+    Sources: Claude Code docs, Codex skills docs, Cline skills docs, OpenCode
+    docs. The `agents` target writes to the shared .agents/skills/ convention
+    honored by Codex, OpenCode, and the Vercel Labs npx skills ecosystem —
+    functionally equivalent to `codex` on disk, exposed under a second name
+    for users who'd rather not name Codex explicitly.
+
+    Path.cwd() / Path.home() are resolved at call time so tests (and any
+    caller that chdirs) get the current working directory.
+    """
+    if agent == "claude-code":
+        return Path.cwd() / ".claude" / "skills" if project else Path.home() / ".claude" / "skills"
+    if agent in ("codex", "agents"):
+        return Path.cwd() / ".agents" / "skills" if project else Path.home() / ".agents" / "skills"
+    if agent == "cline":
+        return Path.cwd() / ".cline" / "skills" if project else Path.home() / ".cline" / "skills"
+    if agent == "opencode":
+        return (
+            Path.cwd() / ".opencode" / "skills"
+            if project
+            else Path.home() / ".config" / "opencode" / "skills"
+        )
+    raise ValueError(f"Unknown agent {agent!r}; expected one of {SKILL_AGENTS}")
 
 
 def cmd_skill_list(args: argparse.Namespace) -> int:  # noqa: ARG001
@@ -2642,10 +2669,11 @@ def cmd_skill_show(args: argparse.Namespace) -> int:
 
 
 def cmd_skill_install(args: argparse.Namespace) -> int:
-    """Copy a generated skill into ~/.claude/skills/<skill_id>/ (or .claude/skills/ with --project)."""
+    """Copy a generated skill into the target agent's skills directory."""
     import shutil
 
     skill_id: str = args.skill_id
+    agent: str = args.agent
     project: bool = getattr(args, "project", False)
 
     manifest_path = _find_skill_manifest(skill_id)
@@ -2654,7 +2682,11 @@ def cmd_skill_install(args: argparse.Namespace) -> int:
         return 1
 
     src = manifest_path.parent
-    dest_root = _skill_install_root(project)
+    try:
+        dest_root = _skill_install_root(agent, project)
+    except ValueError as exc:
+        print(_red(str(exc)))
+        return 2
     dest = dest_root / skill_id
 
     dest_root.mkdir(parents=True, exist_ok=True)
@@ -2662,25 +2694,31 @@ def cmd_skill_install(args: argparse.Namespace) -> int:
         shutil.rmtree(dest)  # overwrite silently per plan
     shutil.copytree(src, dest)
 
-    scope = "project (.claude/skills/)" if project else "global (~/.claude/skills/)"
-    print(_green(f"Installed {_cyan(skill_id)} to {scope}"))
+    scope = "project" if project else "global"
+    print(_green(f"Installed {_cyan(skill_id)} for {_bold(agent)} ({scope})"))
     print(f"  {dest}")
     return 0
 
 
 def cmd_skill_uninstall(args: argparse.Namespace) -> int:
-    """Remove an installed skill from ~/.claude/skills/<skill_id>/ (or .claude/skills/)."""
+    """Remove an installed skill from the target agent's skills directory."""
     import shutil
 
     skill_id: str = args.skill_id
+    agent: str = args.agent
     project: bool = getattr(args, "project", False)
 
-    dest = _skill_install_root(project) / skill_id
+    try:
+        dest = _skill_install_root(agent, project) / skill_id
+    except ValueError as exc:
+        print(_red(str(exc)))
+        return 2
     if not dest.exists():
-        print(_yellow(f"{skill_id!r} is not installed at {dest}"))
+        print(_yellow(f"{skill_id!r} is not installed for {agent} at {dest}"))
         return 0
     shutil.rmtree(dest)
-    print(_green(f"Uninstalled {_cyan(skill_id)} from {dest}"))
+    print(_green(f"Uninstalled {_cyan(skill_id)} from {_bold(agent)}"))
+    print(f"  {dest}")
     return 0
 
 
@@ -3902,21 +3940,35 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_show_p.add_argument("skill_id", help="Skill ID")
 
     skill_install_p = skill_sub.add_parser(
-        "install", help="Install skill to ~/.claude/skills/<skill_id>/"
+        "install", help="Install skill into a specific agent's skills directory"
     )
     skill_install_p.add_argument("skill_id", help="Skill ID")
     skill_install_p.add_argument(
+        "agent",
+        choices=list(SKILL_AGENTS),
+        help=(
+            "Target agent. `agents` is the shared .agents/skills/ convention "
+            "(same on-disk path as `codex`) for users who'd rather pick the "
+            "cross-agent convention explicitly."
+        ),
+    )
+    skill_install_p.add_argument(
         "--project",
         action="store_true",
-        help="Install to .claude/skills/ in the current project instead of ~/.claude/skills/",
+        help="Install to the project-scoped path for this agent (e.g. .claude/skills/, .agents/skills/) instead of the global path",
     )
 
     skill_uninstall_p = skill_sub.add_parser("uninstall", help="Uninstall a skill")
     skill_uninstall_p.add_argument("skill_id", help="Skill ID")
     skill_uninstall_p.add_argument(
+        "agent",
+        choices=list(SKILL_AGENTS),
+        help="Agent whose skills directory to remove from",
+    )
+    skill_uninstall_p.add_argument(
         "--project",
         action="store_true",
-        help="Remove from .claude/skills/ in the current project instead of ~/.claude/skills/",
+        help="Remove from the project-scoped path instead of the global path",
     )
 
     # --- autopilot ---
