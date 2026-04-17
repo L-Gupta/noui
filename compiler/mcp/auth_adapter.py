@@ -38,8 +38,8 @@ import httpx
 from dotenv import load_dotenv
 
 # Load noui/.env — auth.py is at noui_runtime/ inside the server dir:
-# parents: [0]=noui_runtime, [1]=<server_id>, [2]=<app_slug>, [3]=mcp_servers, [4]=noui
-_env_path = Path(__file__).resolve().parents[4] / ".env"
+# parents: [0]=noui_runtime, [1]=<server_id>, [2]=<app_slug>, [3]=mcp_servers, [4]=workbench, [5]=noui
+_env_path = Path(__file__).resolve().parents[5] / ".env"
 load_dotenv(_env_path)
 
 TABBY_API_HOST = os.environ.get("TABBY_API_URL", os.environ.get("TABBY_API_HOST", "{tabby_api_host}"))

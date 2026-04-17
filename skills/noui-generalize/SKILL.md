@@ -10,7 +10,7 @@ Take a generated FastMCP server and make it **work** and **usable**:
 1. **Execution strategy** — if the site has bot detection (Akamai, Cloudflare), rewrite operations to execute API calls from inside the Tabby browser via CDP instead of Python `httpx`.
 2. **Interface cleanup** — replace raw internal API parameters (`f_sid`, `bl`, `reqid`) with natural-language names (`origin`, `destination`, `departure_date`) so Claude Code can invoke tools without domain knowledge.
 
-**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
+**Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `workbench/mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
 
 ---
 
@@ -35,7 +35,7 @@ Before touching tool names or params, check whether the tools actually work.
 ### 0a. Find and test the server
 
 ```bash
-ls -lt mcp_servers/
+ls -lt workbench/mcp_servers/
 ```
 
 Run a quick end-to-end test:
@@ -43,7 +43,7 @@ Run a quick end-to-end test:
 ```bash
 .venv/bin/python -c "
 import asyncio, json, sys
-sys.path.insert(0, 'mcp_servers/<app_slug>/<server_id>')
+sys.path.insert(0, 'workbench/mcp_servers/<app_slug>/<server_id>')
 from operations.<tool_name> import execute
 async def test():
     result = await execute(...)  # fill in sample params

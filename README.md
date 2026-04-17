@@ -63,9 +63,10 @@ Compiler
     → login/  — login session → Tabby Application + ServiceProfile bundle
     → mcp/    — workflow session → FastMCP server + manifest
     ↓
-Output
-    → login_recordings/              — Tabby bundle JSON files
-    → mcp_servers/<app>/<server_id>/ — runnable FastMCP packages
+Output (all under workbench/)
+    → workbench/login_recordings/              — Tabby bundle JSON files
+    → workbench/mcp_servers/<app>/<server_id>/ — runnable FastMCP packages
+    → workbench/skills/<app>/<skill_id>/       — installable Claude Code skills
     ↓
 Tabby Runtime  (persistent browser sessions + live auth)
     ↓
@@ -259,7 +260,7 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 ## 📦 Generated MCP Output
 
 ```
-mcp_servers/
+workbench/mcp_servers/
   <app_slug>/
     <server_id>/
       server.py            # FastMCP entrypoint

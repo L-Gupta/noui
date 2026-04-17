@@ -143,7 +143,7 @@ The compiler detects the Bearer token in the HAR and automatically generates the
 The CLI compiles the captured HAR and click events into a FastMCP server and writes it to:
 
 ```
-mcp_servers/<app_slug>/<server_id>/
+workbench/mcp_servers/<app_slug>/<server_id>/
 ├── server.py            # FastMCP entrypoint
 ├── tools.json           # Tool inventory (source of truth for tool shapes)
 ├── manifest.json        # Server manifest (schema v2: strategy, profile_slug, auth_plan_file)
@@ -161,7 +161,7 @@ On success:
 MCP server generated:
   Server ID  : <server_id>
   Tools      : <n>
-  Output     : mcp_servers/<app_slug>/<server_id>/
+  Output     : workbench/mcp_servers/<app_slug>/<server_id>/
 ```
 
 **Note the `server_id`** — pass it to `/noui-mcp` to start and connect the server.
@@ -229,7 +229,7 @@ Start
 | Export reports `NEEDS_SECRET <VAR>` | Set `<VAR>=<value>` in `noui/.env`, then re-run `--verify` or `mcp verify <server_id>` |
 | Path A/B: auth errors at runtime | Run `mcp diagnose-auth <server_id>` — shows strategy, missing env vars, and repair steps |
 | Path A: Tabby returns empty credentials | Profile not HEALTHY — run `login validate` and `tabby session ensure` |
-| `mcp_servers/` empty after export | Check `.noui-backend.log` in the repo root for compiler errors |
+| `workbench/mcp_servers/` empty after export | Check `.noui-backend.log` in the repo root for compiler errors |
 | Tools have unreadable raw API param names (`f_sid`, `bl`, `reqid`) | Run `/noui-generalize` |
 | `API.md` missing from the generated folder | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to generate it |
 | `API.md` is stale after editing `tools.json` | Run `.venv/bin/python cli/main.py mcp docs <server_id>` to refresh |

@@ -66,8 +66,10 @@ from urllib.parse import urlparse
 
 CLI_DIR = Path(__file__).parent
 NOUI_DIR = CLI_DIR.parent
-MCP_SERVERS_DIR = NOUI_DIR / "mcp_servers"
-LOGIN_RECORDINGS_DIR = NOUI_DIR / "login_recordings"
+WORKBENCH_DIR = NOUI_DIR / "workbench"
+MCP_SERVERS_DIR = WORKBENCH_DIR / "mcp_servers"
+LOGIN_RECORDINGS_DIR = WORKBENCH_DIR / "login_recordings"
+SKILLS_DIR = WORKBENCH_DIR / "skills"
 NOUI_PID_FILE = NOUI_DIR / ".noui-backend.pid"
 NOUI_LOG_FILE = NOUI_DIR / ".noui-backend.log"
 
@@ -523,7 +525,7 @@ def cmd_login_list(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def cmd_login_export(args: argparse.Namespace) -> int:
-    """Analyze session and write bundle JSON to login_recordings/."""
+    """Analyze session and write bundle JSON to workbench/login_recordings/."""
     if not _backend_alive():
         print(_red(f"NoUI backend not reachable at {BACKEND_URL}"))
         return 1
@@ -1126,7 +1128,7 @@ def _run_mcp_verify(server_id: str) -> int:
 
     manifest_path = _find_mcp_manifest(server_id)
     if not manifest_path:
-        print(_red(f"  Server {server_id!r} not found in mcp_servers/"))
+        print(_red(f"  Server {server_id!r} not found in workbench/mcp_servers/"))
         return 1
 
     server_dir = manifest_path.parent
@@ -1881,10 +1883,10 @@ def cmd_autopilot_status(args: argparse.Namespace) -> int:
 
 
 def _find_mcp_manifest(server_id: str) -> Path | None:
-    """Search mcp_servers/ for a manifest.json matching server_id."""
+    """Search workbench/mcp_servers/ for a manifest.json matching server_id."""
     if not MCP_SERVERS_DIR.exists():
         return None
-    # Direct path: mcp_servers/<server_id>/manifest.json
+    # Direct path: workbench/mcp_servers/<server_id>/manifest.json
     direct = MCP_SERVERS_DIR / server_id / "manifest.json"
     if direct.exists():
         return direct
@@ -1906,12 +1908,12 @@ def _mcp_pid_file(manifest_path: Path, server_id: str) -> Path:
 def cmd_mcp_list(args: argparse.Namespace) -> int:  # noqa: ARG001
     """List generated MCP servers."""
     if not MCP_SERVERS_DIR.exists():
-        print(_yellow("No MCP servers found (mcp_servers/ does not exist)."))
+        print(_yellow("No MCP servers found (workbench/mcp_servers/ does not exist)."))
         return 0
 
     manifests = list(MCP_SERVERS_DIR.rglob("manifest.json"))
     if not manifests:
-        print(_yellow("No MCP server manifests found in mcp_servers/."))
+        print(_yellow("No MCP server manifests found in workbench/mcp_servers/."))
         return 0
 
     print(_bold("MCP servers:"))
@@ -2403,7 +2405,7 @@ def cmd_mcp_diagnose_auth(args: argparse.Namespace) -> int:
     server_id: str = args.server_id
     manifest_path = _find_mcp_manifest(server_id)
     if not manifest_path:
-        print(_red(f"Server {server_id!r} not found in mcp_servers/"))
+        print(_red(f"Server {server_id!r} not found in workbench/mcp_servers/"))
         return 1
 
     server_dir = manifest_path.parent
@@ -3560,7 +3562,7 @@ def _build_parser() -> argparse.ArgumentParser:
     login_sub.add_parser("list", help="List login sessions")
 
     login_export = login_sub.add_parser(
-        "export", help="Analyze session and write bundle JSON to login_recordings/"
+        "export", help="Analyze session and write bundle JSON to workbench/login_recordings/"
     )
     login_export.add_argument("session_id", help="Login session ID")
 

@@ -198,7 +198,7 @@ async def export_mcp(
     - Loads click events, url events, and HAR for this session
     - Detects auth signals and generates auth_plan.json
     - Runs the MCP compiler
-    - Writes output to noui/mcp_servers/<app_slug>/<server_id>/
+    - Writes output to noui/workbench/mcp_servers/<app_slug>/<server_id>/
     - Returns the manifest dict
     """
     # Load workflow session
@@ -295,7 +295,7 @@ async def export_mcp(
     app_slug = re.sub(r"[^a-z0-9]+", "-", session.name.lower()).strip("-") or "app"
     server_id = f"{app_slug}-{session_id[:8]}"
 
-    output_dir = str(_NOUI_ROOT / "mcp_servers" / app_slug / server_id)
+    output_dir = str(_NOUI_ROOT / "workbench" / "mcp_servers" / app_slug / server_id)
 
     # Run the compiler
     try:
