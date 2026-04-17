@@ -158,6 +158,7 @@ def _pid_running(pid: int) -> bool:
 
 def _cdp_is_reachable(host: str = "localhost", port: int = 9222, timeout: float = 2.0) -> bool:
     import socket
+
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -168,8 +169,20 @@ def _cdp_is_reachable(host: str = "localhost", port: int = 9222, timeout: float 
 def _mark_session_terminated(session_id: str) -> None:
     sql = f"UPDATE sessions SET state='TERMINATED' WHERE id='{session_id}'"
     subprocess.run(
-        ["docker", "compose", "exec", "-T", "postgres", "psql",
-         "-U", "browser_hitl", "-d", "browser_hitl", "-c", sql],
+        [
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "browser_hitl",
+            "-d",
+            "browser_hitl",
+            "-c",
+            sql,
+        ],
         cwd=str(TABBY_DIR),
         capture_output=True,
     )
@@ -1087,7 +1100,11 @@ def cmd_workflow_export_mcp(args: argparse.Namespace) -> int:
         if not slug:
             print()
             print(_yellow("  ⚠  This server requires auth but no profile was linked."))
-            print(_yellow(f"     Re-export with: noui workflow export-mcp {session_id} --profile-slug <slug>"))
+            print(
+                _yellow(
+                    f"     Re-export with: noui workflow export-mcp {session_id} --profile-slug <slug>"
+                )
+            )
             print(_yellow("     Available profiles: noui tabby session status"))
     else:
         print("  Auth       : none (public API)")
@@ -1968,10 +1985,14 @@ def cmd_mcp_status(args: argparse.Namespace) -> int:
 
     # Check CDP accessibility for servers that use the browser-via-CDP pattern
     ops_dir = manifest_path.parent / "operations"
-    uses_cdp = any(
-        "CDP_LIST_URL" in op_file.read_text(encoding="utf-8", errors="ignore")
-        for op_file in ops_dir.glob("*.py")
-    ) if ops_dir.exists() else False
+    uses_cdp = (
+        any(
+            "CDP_LIST_URL" in op_file.read_text(encoding="utf-8", errors="ignore")
+            for op_file in ops_dir.glob("*.py")
+        )
+        if ops_dir.exists()
+        else False
+    )
     if uses_cdp:
         if _cdp_is_reachable():
             print(f"  CDP       : {_green('reachable (localhost:9222)')}")
@@ -3348,7 +3369,7 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         # Worker has died but DB still shows HEALTHY — clear the stale state
         _mark_session_terminated(healthy[0]["id"])
         _clear_pid(TABBY_WORKER_PID_FILE)
-        print(_yellow(f"  Stale HEALTHY session detected (worker not running) — restarting …"))
+        print(_yellow("  Stale HEALTHY session detected (worker not running) — restarting …"))
 
     print(f"No HEALTHY session for '{_cyan(profile_id)}' — starting one …")
 
