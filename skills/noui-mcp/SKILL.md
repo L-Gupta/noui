@@ -68,6 +68,13 @@ mcp_servers/<app_slug>/<server_id>/.mcp-<server_id>.log
 .venv/bin/python cli/main.py mcp status <server_id>
 ```
 
+For servers that use CDP (Akamai-protected sites like Expedia), status also shows browser session health:
+
+```
+  CDP       : ✓ reachable (localhost:9222)   ← worker is running
+  CDP       : ✗ not reachable (localhost:9222) ← run: noui tabby session ensure
+```
+
 ---
 
 ## Step 4 — Stop a Server
@@ -149,7 +156,7 @@ Start
 | `.venv/bin/python cli/main.py mcp list` | List all generated servers with running status |
 | `.venv/bin/python cli/main.py mcp start <server_id>` | Start a server process in the background |
 | `.venv/bin/python cli/main.py mcp stop <server_id>` | Stop a running server process |
-| `.venv/bin/python cli/main.py mcp status <server_id>` | Show running state, tool count, and manifest path |
+| `.venv/bin/python cli/main.py mcp status <server_id>` | Show running state, tool count, manifest path, and CDP reachability (for browser-based servers) |
 | `.venv/bin/python cli/main.py mcp docs <server_id>` | Regenerate `API.md` from current `tools.json` |
 | `.venv/bin/python cli/main.py mcp docs <server_id> --check` | Exit non-zero if `API.md` is stale (for CI / agent validation) |
 | `.venv/bin/python cli/main.py mcp verify <server_id>` | Run AuthVerifier — reports PASS / REPAIR_APPLIED / NEEDS_SECRET / UNSUPPORTED |
@@ -170,3 +177,6 @@ Start
 | Auth errors at runtime (authenticated server) | Run `mcp diagnose-auth <server_id>` — shows missing env vars and repair steps |
 | `NEEDS_SECRET <VAR>` from verify | Set `<VAR>=<value>` in `noui/.env` and re-run `mcp verify <server_id>` |
 | Server is v1 (no `auth_plan.json`) | Re-export with `workflow export-mcp ... --profile-slug <slug> --verify` to upgrade to v2 |
+| Tool fails with "All connection attempts failed" | CDP-based server needs browser session — run `mcp status <server_id>` to check CDP, then `noui tabby session ensure` |
+| Tabby session shows HEALTHY but tools still fail | Worker crashed but DB state is stale — run `noui tabby session ensure` (auto-detects and restarts dead workers) |
+| Exported server has `profile_slug: null` | No `--profile-slug` was passed at export time — re-export: `workflow export-mcp <session_id> --profile-slug <slug>` |

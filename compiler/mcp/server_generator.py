@@ -160,6 +160,12 @@ def compile_workflow(
 
     # ── 8. Write auth_plan.json (when auth is required) ───────────────────────
     if auth_plan:
+        # Ensure profile_slug in auth_plan always matches the manifest value so
+        # the two files stay in sync regardless of how generate_auth_plan resolves it.
+        if effective_slug:
+            auth_plan["profile_slug"] = effective_slug
+            if "tabby_export" in auth_plan:
+                auth_plan["tabby_export"]["runtime_identifier"] = effective_slug
         (out_path / "auth_plan.json").write_text(
             json.dumps(auth_plan, indent=2, ensure_ascii=False), encoding="utf-8"
         )
