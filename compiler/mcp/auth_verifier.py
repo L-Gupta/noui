@@ -68,7 +68,7 @@ class AuthVerifier:
 
         verifier = AuthVerifier(
             auth_plan=auth_plan,
-            server_dir="/path/to/workbench/mcp_servers/adopt-bank/adopt-bank-abc12345",
+            server_dir="/path/to/workbench/mcp_servers/example-bank/example-bank-abc12345",
             tabby_api_host="http://localhost:8080",
             tabby_admin_token="admin-token",
         )

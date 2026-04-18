@@ -81,7 +81,11 @@ NOUI_LOG_FILE = NOUI_DIR / ".noui-backend.log"
 NOUI_PORT = int(os.environ.get("NOUI_PORT", "8002"))
 BACKEND_URL = f"http://localhost:{NOUI_PORT}"
 
-TABBY_DIR = NOUI_DIR.parent / "tabby"
+TABBY_DIR = (
+    Path(os.environ["TABBY_DIR"]).expanduser()
+    if os.environ.get("TABBY_DIR")
+    else NOUI_DIR / "tabby"
+)
 TABBY_API_HOST = os.environ.get("TABBY_API_HOST", "http://localhost:8080")
 ENV_LOCAL = TABBY_DIR / ".env.local"
 ENV_EXAMPLE = TABBY_DIR / ".env.example"
@@ -3855,7 +3859,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         metavar="SLUG",
         dest="profile_slug",
-        help="Tabby profile slug for runtime credential requests (e.g. 'adopt-bank')",
+        help="Tabby profile slug for runtime credential requests (e.g. 'example-bank')",
     )
     wf_export.add_argument(
         "--profile-db-id",
