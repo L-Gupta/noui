@@ -52,7 +52,7 @@ The compiler auto-detects the strategy from the HAR (Authorization header + no S
 - **NEVER** skip `workflow export` — recording alone produces no server or skill
 - Prefer the default `--as both` unless the user has a clear reason to pick one; it's a single extra compile pass and preserves the choice for later
 - For Path A/B: **ALWAYS** pass `--profile-slug <slug>` — this is the runtime credential identifier; without it auth falls back to unauthenticated
-- **NEVER** pass the DB UUID as `--profile-slug` — that is admin-only; use the human-readable slug (e.g. `adopt-bank`, not `8fdadf43-...`)
+- **NEVER** pass the DB UUID as `--profile-slug` — that is admin-only; use the human-readable slug (e.g. `example-bank`, not `8fdadf43-...`)
 - **ALWAYS** note the `server_id` printed after export — it is required for all `mcp` commands
 - **ALWAYS** create the workflow session with the CLI before the user records in Chrome — the session_id is needed for export
 

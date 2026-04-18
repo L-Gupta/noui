@@ -2,7 +2,28 @@
  * Backend API client — proxies all requests through the service worker.
  */
 
-const BACKEND_URL = "http://localhost:8002";
+const DEFAULT_BACKEND_URL = "http://localhost:8002";
+let BACKEND_URL = DEFAULT_BACKEND_URL;
+
+// Load user-configured backend URL from chrome.storage.sync (set via popup Settings).
+// Falls back to the default if storage is empty or unavailable.
+(async () => {
+  try {
+    const { nouiBackendUrl } = await chrome.storage.sync.get("nouiBackendUrl");
+    if (nouiBackendUrl && typeof nouiBackendUrl === "string") {
+      BACKEND_URL = nouiBackendUrl.replace(/\/$/, "");
+    }
+  } catch (_e) {
+    // storage unavailable — keep default
+  }
+})();
+
+export const getBackendUrl = () => BACKEND_URL;
+export const setBackendUrl = async (url) => {
+  const trimmed = (url || "").replace(/\/$/, "");
+  BACKEND_URL = trimmed || DEFAULT_BACKEND_URL;
+  await chrome.storage.sync.set({ nouiBackendUrl: BACKEND_URL });
+};
 
 function api(method, path, body) {
   return new Promise((resolve, reject) => {

@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "NoUI Workflow Recorder",
-  "version": "0.3.2",
+  "version": "1.0.0",
   "description": "Record enriched browser sessions for API specification elicitation",
+  "homepage_url": "https://github.com/adoptai/noui",
   "permissions": [
     "storage",
     "activeTab",

@@ -164,13 +164,25 @@ NoUI removes that layer.
 ### Prerequisites
 
 - Python 3.11+
+- Docker (for Tabby)
 - Chrome browser
-- (Optional) Tabby running at `http://localhost:8080` for authenticated apps
+
+### Clone with submodules
+
+> ⚠️ **NoUI includes Tabby as a git submodule.** You must clone recursively,
+> or the `tabby/` directory will be empty and `noui tabby start` will fail.
+
+```bash
+git clone --recursive https://github.com/adoptai/noui.git
+
+# Or, if you already cloned without --recursive:
+git submodule update --init
+```
 
 ### Install
 
 ```bash
-# From the noui/ directory
+cd noui
 
 # 1. Create a venv and install dependencies
 python3 -m venv .venv
@@ -318,6 +330,45 @@ noui tabby session status / ensure [--profile] / stop
 | GET  | `/health` | Backend health check |
 
 Interactive docs: http://localhost:8002/docs
+
+------------------------------------------------------------------------
+
+## 🔗 Tabby compatibility
+
+NoUI depends on [Tabby](https://github.com/adoptai/tabby) for authenticated
+browser sessions. To keep behavior deterministic across releases, NoUI pins a
+specific SHA on Tabby's `tabby-noui` branch via a git submodule.
+
+- **Current pin:** `tabby-noui @ d212467`
+- **Branch:** `tabby-noui`
+- **Submodule path:** `tabby/` (inside this repository)
+
+Using a different Tabby revision is unsupported. If you need to run against a
+local Tabby checkout for development, set the `TABBY_DIR` environment variable
+to override the submodule path. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+submodule-bump workflow.
+
+------------------------------------------------------------------------
+
+## 🧩 Chrome extension
+
+v1 ships as a **load-unpacked** extension — there is no Chrome Web Store listing yet.
+
+```
+Chrome → chrome://extensions → Developer mode → Load unpacked → select noui/extension/
+```
+
+The backend URL defaults to `http://localhost:8002`. To point the extension at
+a different backend, open the extension popup → Settings.
+
+------------------------------------------------------------------------
+
+## 📚 Project docs
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, PR process, bumping the Tabby submodule
+- [SECURITY.md](SECURITY.md) — responsible disclosure
+- [CHANGELOG.md](CHANGELOG.md) — release history
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ------------------------------------------------------------------------
 

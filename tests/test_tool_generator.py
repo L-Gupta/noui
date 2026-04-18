@@ -44,7 +44,7 @@ def _simple_tool(
     }
 
 
-def _tabby_auth_plan(profile_slug: str = "adopt-bank") -> dict:
+def _tabby_auth_plan(profile_slug: str = "example-bank") -> dict:
     return {
         "strategy": "tabby_credentials",
         "profile_slug": profile_slug,

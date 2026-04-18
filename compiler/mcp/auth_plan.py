@@ -73,8 +73,8 @@ def _env_var_name(app_slug: str, header_name: str) -> str:
     """Derive a conventional env var name from the app slug and header name.
 
     Examples:
-        ("adopt-bank", "Authorization") → "ADOPT_BANK_API_KEY"
-        ("adopt-bank", "X-Api-Key")     → "ADOPT_BANK_X_API_KEY"
+        ("example-bank", "Authorization") → "EXAMPLE_BANK_API_KEY"
+        ("example-bank", "X-Api-Key")     → "EXAMPLE_BANK_X_API_KEY"
     """
     slug_part = re.sub(r"[^A-Z0-9]+", "_", app_slug.upper()).strip("_")
     if header_name.lower() == "authorization":

@@ -4,7 +4,22 @@
  * Generic API proxy + screenshot capture + HAR capture via chrome.webRequest.
  */
 
-const BACKEND_URL = "http://localhost:8002";
+const DEFAULT_BACKEND_URL = "http://localhost:8002";
+let BACKEND_URL = DEFAULT_BACKEND_URL;
+
+// Load the user-configured backend URL (set via popup Settings) and keep it in sync.
+chrome.storage.sync.get("nouiBackendUrl").then(({ nouiBackendUrl }) => {
+  if (nouiBackendUrl && typeof nouiBackendUrl === "string") {
+    BACKEND_URL = nouiBackendUrl.replace(/\/$/, "");
+  }
+}).catch(() => { /* keep default */ });
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.nouiBackendUrl) {
+    const v = changes.nouiBackendUrl.newValue;
+    BACKEND_URL = (typeof v === "string" && v) ? v.replace(/\/$/, "") : DEFAULT_BACKEND_URL;
+  }
+});
 
 // Track which tab has the voice recognizer injected
 let voiceActiveTabId = null;

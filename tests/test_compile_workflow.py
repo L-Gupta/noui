@@ -174,8 +174,8 @@ class TestStaticApiKeyApp:
         )
         self.manifest, self.files = _compile(
             har,
-            app_slug="adopt-bank",
-            profile_slug="adopt-bank",
+            app_slug="example-bank",
+            profile_slug="example-bank",
             profile_db_id="8fdadf43-01f5-48ab-905b-fc7e4d4b3c70",
         )
 
@@ -191,16 +191,16 @@ class TestStaticApiKeyApp:
         plan = json.loads(self.files["auth_plan.json"])
         assert plan["fallbacks"], "static_secret_header plan must have fallbacks"
         fb = plan["fallbacks"][0]
-        assert fb["secret_env_var"] == "ADOPT_BANK_API_KEY"
+        assert fb["secret_env_var"] == "EXAMPLE_BANK_API_KEY"
         assert "Bearer" in fb["value_template"], "Bearer prefix must be in value_template"
         # Must NOT embed the actual token value
         assert "abc123" not in json.dumps(plan), "Plan must not store the actual token"
 
     def test_profile_slug_not_uuid_in_plan(self) -> None:
         plan = json.loads(self.files["auth_plan.json"])
-        assert plan["profile_slug"] == "adopt-bank"
+        assert plan["profile_slug"] == "example-bank"
         assert plan["profile_db_id"] == "8fdadf43-01f5-48ab-905b-fc7e4d4b3c70"
-        assert plan["tabby_export"]["runtime_identifier"] == "adopt-bank", (
+        assert plan["tabby_export"]["runtime_identifier"] == "example-bank", (
             "runtime_identifier must be the slug, never the UUID"
         )
 
@@ -218,7 +218,7 @@ class TestStaticApiKeyApp:
 
     def test_manifest_profile_slug_not_uuid(self) -> None:
         auth = self.manifest["auth"]
-        assert auth["profile_slug"] == "adopt-bank"
+        assert auth["profile_slug"] == "example-bank"
         assert auth["profile_db_id"] == "8fdadf43-01f5-48ab-905b-fc7e4d4b3c70"
 
     def test_accept_header_preserved(self) -> None:

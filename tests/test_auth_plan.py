@@ -103,7 +103,7 @@ class TestStaticApiKeyDetection:
 
 class TestEnvVarNaming:
     def test_authorization_becomes_api_key(self) -> None:
-        assert _env_var_name("adopt-bank", "Authorization") == "ADOPT_BANK_API_KEY"
+        assert _env_var_name("example-bank", "Authorization") == "EXAMPLE_BANK_API_KEY"
 
     def test_x_api_key_header(self) -> None:
         assert _env_var_name("my-app", "X-Api-Key") == "MY_APP_X_API_KEY"
@@ -144,9 +144,9 @@ class TestAuthPlanStrategy:
         plan = generate_auth_plan(
             har=har,
             auth_info=self._auth_info_with_bearer(),
-            profile_slug="adopt-bank",
+            profile_slug="example-bank",
             profile_db_id="some-uuid",
-            app_slug="adopt-bank",
+            app_slug="example-bank",
         )
         assert plan["strategy"] == "static_secret_header"
 
@@ -204,14 +204,14 @@ class TestProfileIdentifiers:
         plan = generate_auth_plan(
             har=har,
             auth_info=auth_info,
-            profile_slug="adopt-bank",
+            profile_slug="example-bank",
             profile_db_id="8fdadf43-01f5-48ab-905b-fc7e4d4b3c70",
-            app_slug="adopt-bank",
+            app_slug="example-bank",
         )
-        assert plan["profile_slug"] == "adopt-bank"
+        assert plan["profile_slug"] == "example-bank"
         assert plan["profile_db_id"] == "8fdadf43-01f5-48ab-905b-fc7e4d4b3c70"
         # The runtime identifier must use the SLUG, not the UUID
-        assert plan["tabby_export"]["runtime_identifier"] == "adopt-bank"
+        assert plan["tabby_export"]["runtime_identifier"] == "example-bank"
 
     def test_runtime_identifier_is_slug_not_uuid(self) -> None:
         """credentials/request must use slug — UUID must never appear in runtime_identifier."""
@@ -258,9 +258,9 @@ class TestFallbacks:
         plan = generate_auth_plan(
             har=har,
             auth_info=auth_info,
-            profile_slug="adopt-bank",
+            profile_slug="example-bank",
             profile_db_id="",
-            app_slug="adopt-bank",
+            app_slug="example-bank",
         )
         assert plan["fallbacks"], "Static secret app should have at least one fallback"
         fb = plan["fallbacks"][0]
@@ -284,9 +284,9 @@ class TestFallbacks:
         plan = generate_auth_plan(
             har=har,
             auth_info=auth_info,
-            profile_slug="adopt-bank",
+            profile_slug="example-bank",
             profile_db_id="",
-            app_slug="adopt-bank",
+            app_slug="example-bank",
         )
         fb = plan["fallbacks"][0]
         assert fb["value_template"].startswith("Bearer "), (
