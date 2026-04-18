@@ -105,11 +105,8 @@ jobs:
           node -e "const m = require('./extension/manifest.json'); if (m.manifest_version !== 3) process.exit(1);"
 
       - name: ESLint (extension JS)
-        run: |
-          npx --yes eslint@9 \
-            --no-config-lookup \
-            --config '{"languageOptions":{"ecmaVersion":2022,"sourceType":"module","globals":{"chrome":"readonly"}},"rules":{"no-undef":"error","no-unused-vars":"off"}}' \
-            "extension/**/*.js"
+        working-directory: extension
+        run: npx --yes eslint@9 "**/*.js"
 
   secrets-scan:
     name: secrets-scan
@@ -123,3 +120,4 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
