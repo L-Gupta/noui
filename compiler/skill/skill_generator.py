@@ -125,7 +125,28 @@ def compile_workflow_to_skill(
     if execution_mode == "cdp":
         (runtime_dir / "cdp.py").write_text(generate_cdp_adapter(), encoding="utf-8")
 
-    # 4. operations/*.py (skill-specific rendering with CLI wrapper)
+    # 4. pyproject.toml + .python-version — per-skill Python environment (retro D1).
+    # Needs httpx for any CDP or HTTP operation; websockets only for CDP mode.
+    pyproject_deps = ['"httpx>=0.27"']
+    if execution_mode == "cdp":
+        pyproject_deps.append('"websockets>=12"')
+    pyproject_toml = (
+        f"[project]\n"
+        f'name = "{skill_id}"\n'
+        f'version = "0.1.0"\n'
+        f'description = "NoUI-generated skill for {app_name}."\n'
+        f'requires-python = ">=3.11"\n'
+        f"dependencies = [\n"
+        + "".join(f"    {d},\n" for d in pyproject_deps)
+        + f"]\n"
+        f"\n"
+        f"[tool.uv]\n"
+        f"package = false\n"
+    )
+    (out_path / "pyproject.toml").write_text(pyproject_toml, encoding="utf-8")
+    (out_path / ".python-version").write_text("3.11\n", encoding="utf-8")
+
+    # 5. operations/*.py (skill-specific rendering with CLI wrapper)
     ops_dir = out_path / "operations"
     ops_dir.mkdir(exist_ok=True)
     (ops_dir / "__init__.py").write_text("", encoding="utf-8")
@@ -161,7 +182,7 @@ def compile_workflow_to_skill(
             }
         )
 
-    # 5. SKILL.md (frontmatter + body — what Claude loads when intent matches)
+    # 6. SKILL.md (frontmatter + body — what Claude loads when intent matches)
     skill_md = render_skill_md(
         skill_id=skill_id,
         app_name=app_name,
@@ -171,6 +192,7 @@ def compile_workflow_to_skill(
         auth_plan=auth_plan,
         profile_slug=effective_slug,
         description_override=description_override,
+        python_executable=".venv/bin/python",
     )
     (out_path / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
@@ -196,10 +218,12 @@ def compile_workflow_to_skill(
             json.dumps(auth_plan, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
-    # 8. manifest.json
+    # 9. manifest.json
     all_files = [
         "SKILL.md",
         "API.md",
+        "pyproject.toml",
+        ".python-version",
         "noui_runtime/__init__.py",
         "noui_runtime/auth.py",
         "operations/__init__.py",
@@ -241,6 +265,7 @@ def compile_workflow_to_skill(
             "entrypoint": "SKILL.md",
             "operation_style": "subprocess-cli",
             "python": ">=3.11",
+            "python_executable": ".venv/bin/python",
         },
         "operations": op_entries,
         "artifacts": {

@@ -2635,8 +2635,14 @@ def cmd_skill_list(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def cmd_skill_show(args: argparse.Namespace) -> int:
-    """Print a skill's manifest and SKILL.md preview."""
+    """Print a skill's manifest and SKILL.md preview.
+
+    With --smoke, also invoke each operation with `--help` to catch import
+    errors / missing deps before agent invocation time.
+    """
     skill_id: str = args.skill_id
+    smoke: bool = getattr(args, "smoke", False)
+
     manifest_path = _find_skill_manifest(skill_id)
     if not manifest_path:
         print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
@@ -2671,16 +2677,255 @@ def cmd_skill_show(args: argparse.Namespace) -> int:
         print(_bold("SKILL.md (frontmatter + preview):"))
         head = body[:fm_end] + "\n".join(body[fm_end:].splitlines()[:20])
         print(head)
+
+    if smoke:
+        return _smoke_test_skill(manifest, skill_dir)
+    return 0
+
+
+def _smoke_test_skill(manifest: dict, skill_dir: Path) -> int:
+    """Run `python <op> --help` for each operation and report pass/fail.
+
+    Uses manifest.runtime.python_executable (resolved under skill_dir) when
+    present, falling back to `sys.executable`. A failing `--help` means the
+    operation can't even import — Claude Code won't be able to invoke it
+    either.
+    """
+    import subprocess
+
+    runtime = manifest.get("runtime", {}) or {}
+    python_rel = runtime.get("python_executable", "")
+    python_exe: str
+    if python_rel:
+        python_path = skill_dir / python_rel
+        python_exe = str(python_path) if python_path.exists() else sys.executable
+        if not python_path.exists():
+            print(
+                _yellow(
+                    f"  runtime.python_executable {python_rel!r} not found; falling back to {sys.executable}"
+                )
+            )
+    else:
+        python_exe = sys.executable
+
+    operations = manifest.get("operations", []) or []
+    if not operations:
+        print(_yellow("No operations to smoke-test."))
+        return 0
+
+    print()
+    print(_bold("Smoke test (--help per operation):"))
+    print()
+    width = max(len(op.get("name", "?")) for op in operations) + 2
+    any_failed = False
+    for op in operations:
+        name = op.get("name", "?")
+        module_rel = op.get("module", f"operations/{name}.py")
+        module_path = skill_dir / module_rel
+        if not module_path.exists():
+            print(f"  {_red('FAIL'):10} {name:<{width}}  module file missing: {module_rel}")
+            any_failed = True
+            continue
+        try:
+            completed = subprocess.run(
+                [python_exe, str(module_path), "--help"],
+                cwd=str(skill_dir),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  {_red('TIMEOUT'):10} {name:<{width}}  --help did not return within 5s")
+            any_failed = True
+            continue
+        except Exception as exc:
+            print(f"  {_red('ERROR'):10} {name:<{width}}  {exc}")
+            any_failed = True
+            continue
+        if completed.returncode == 0:
+            print(f"  {_green('ok'):10} {name:<{width}}")
+        else:
+            err_first = (completed.stderr or completed.stdout or "").splitlines()
+            err_snippet = err_first[-1] if err_first else f"exit {completed.returncode}"
+            print(f"  {_red('FAIL'):10} {name:<{width}}  {err_snippet[:120]}")
+            any_failed = True
+    print()
+    if any_failed:
+        print(_red("One or more operations failed smoke test."))
+        return 1
+    print(_green("All operations passed smoke test."))
+    return 0
+
+
+def cmd_skill_docs(args: argparse.Namespace) -> int:
+    """Regenerate SKILL.md + API.md for a skill, preserving custom-fenced regions.
+
+    Mirrors `cmd_mcp_docs` for the skill output format. Reads the current
+    `manifest.json` and re-emits docs using the operation list, auth plan, and
+    identity fields from the manifest. Custom-fenced regions (``<!-- custom:
+    start:NAME --> … <!-- custom:end:NAME -->``) in the existing SKILL.md /
+    API.md are carried forward verbatim.
+    """
+    skill_id: str = args.skill_id
+    check_only: bool = getattr(args, "check", False)
+
+    manifest_path = _find_skill_manifest(skill_id)
+    if manifest_path is None:
+        print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
+        return 1
+    skill_dir = manifest_path.parent
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to parse manifest.json: {exc}"))
+        return 1
+
+    app_info = manifest.get("app", {}) or {}
+    app_name = app_info.get("name", _slug_to_title(skill_id))
+    app_slug = app_info.get("slug", skill_id)
+    workflow_info = manifest.get("workflow", {}) or {}
+    workflow_name = workflow_info.get("name", app_name)
+    auth_info = manifest.get("auth", {}) or {}
+    profile_slug = auth_info.get("profile_slug") or ""
+    runtime = manifest.get("runtime", {}) or {}
+    python_executable = runtime.get("python_executable", ".venv/bin/python")
+
+    # Reconstruct tool_defs from manifest.operations. Note: operations[].args
+    # loses some richness (no request body shape) vs HAR-derived tool_defs; the
+    # renderer tolerates missing fields and omits sections that would be empty.
+    tool_defs: list[dict] = []
+    for op in manifest.get("operations", []) or []:
+        tool_defs.append(
+            {
+                "name": op.get("name", "?"),
+                "description": op.get("description", op.get("name", "?")),
+                "method": op.get("method", "?"),
+                "path": op.get("path", "?"),
+                "params": [
+                    {
+                        "name": a.get("name", "?"),
+                        "type": a.get("type", "string"),
+                        "required": bool(a.get("required", False)),
+                        **({"default": a["default"]} if "default" in a else {}),
+                    }
+                    for a in op.get("args", []) or []
+                ],
+            }
+        )
+
+    # Load the auth_plan.json if referenced, so description-synth knows the profile context.
+    auth_plan: dict = {}
+    auth_plan_file = auth_info.get("auth_plan_file")
+    if auth_plan_file:
+        auth_plan_path = skill_dir / auth_plan_file
+        if auth_plan_path.exists():
+            try:
+                auth_plan = json.loads(auth_plan_path.read_text())
+            except Exception:
+                auth_plan = {}
+    # Treat any requires_auth=True as having auth_plan for rendering purposes
+    if auth_info.get("requires_auth") and not auth_plan:
+        auth_plan = {"strategy": auth_info.get("strategy") or "tabby_credentials"}
+
+    try:
+        sys.path.insert(0, str(NOUI_DIR))
+        from compiler.mcp.api_doc_generator import generate_api_markdown
+        from compiler.skill.skill_md_generator import render_skill_md
+    except ImportError as exc:
+        print(_red(f"Cannot import skill doc generators: {exc}"))
+        return 1
+
+    skill_md_path = skill_dir / "SKILL.md"
+    api_md_path = skill_dir / "API.md"
+
+    existing_skill_md = skill_md_path.read_text(encoding="utf-8") if skill_md_path.exists() else None
+    existing_api_md = api_md_path.read_text(encoding="utf-8") if api_md_path.exists() else None
+
+    new_skill_md = render_skill_md(
+        skill_id=skill_id,
+        app_name=app_name,
+        app_slug=app_slug,
+        workflow_name=workflow_name,
+        tool_defs=tool_defs,
+        auth_plan=auth_plan,
+        profile_slug=profile_slug,
+        python_executable=python_executable,
+        existing=existing_skill_md,
+    )
+    new_api_md = generate_api_markdown(
+        server_id=skill_id,
+        app_name=app_name,
+        app_slug=app_slug,
+        workflow_name=workflow_name,
+        tool_defs=tool_defs,
+        tabby_profile_id=profile_slug,
+        existing=existing_api_md,
+    )
+
+    def _strip_timestamp(text: str) -> str:
+        return "\n".join(
+            line
+            for line in text.splitlines()
+            if not line.startswith("> **Generated by NoUI** on ")
+        )
+
+    if check_only:
+        stale = False
+        for label, existing, fresh in (
+            ("SKILL.md", existing_skill_md, new_skill_md),
+            ("API.md", existing_api_md, new_api_md),
+        ):
+            if existing is None:
+                print(_red(f"{label} does not exist — run `noui skill docs {skill_id}` to generate"))
+                stale = True
+                continue
+            if _strip_timestamp(existing) != _strip_timestamp(fresh):
+                print(_red(f"{label} is stale — run `noui skill docs {skill_id}` to refresh"))
+                stale = True
+            else:
+                print(_green(f"{label} is up to date"))
+        return 1 if stale else 0
+
+    skill_md_path.write_text(new_skill_md, encoding="utf-8")
+    api_md_path.write_text(new_api_md, encoding="utf-8")
+    print(_green(f"SKILL.md written: {skill_md_path}"))
+    print(_green(f"API.md written: {api_md_path}"))
+
+    # Keep manifest artifacts.files in sync (ensure both doc files listed).
+    artifacts = manifest.setdefault("artifacts", {})
+    artifacts.setdefault("skill_file", "SKILL.md")
+    artifacts.setdefault("api_docs_file", "API.md")
+    files_list: list = artifacts.get("files", []) or []
+    for required in ("SKILL.md", "API.md"):
+        if required not in files_list:
+            files_list.append(required)
+    artifacts["files"] = files_list
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return 0
 
 
 def cmd_skill_install(args: argparse.Namespace) -> int:
-    """Copy a generated skill into the target agent's skills directory."""
+    """Copy (or symlink) a generated skill into the target agent's skills directory.
+
+    Flags:
+        --symlink: link the install path to the workbench source instead of
+            copying. Edits in either location are visible from the other.
+            Fails gracefully on platforms without symlink support.
+        --with-env: provision a Python virtualenv inside the install dir so
+            the skill's operations have their declared deps. Values: auto|uv|
+            venv|none. Default none.
+    """
+    import os
     import shutil
 
     skill_id: str = args.skill_id
     agent: str = args.agent
     project: bool = getattr(args, "project", False)
+    symlink: bool = getattr(args, "symlink", False)
+    with_env: str = getattr(args, "with_env", "none") or "none"
 
     manifest_path = _find_skill_manifest(skill_id)
     if not manifest_path:
@@ -2696,13 +2941,97 @@ def cmd_skill_install(args: argparse.Namespace) -> int:
     dest = dest_root / skill_id
 
     dest_root.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        shutil.rmtree(dest)  # overwrite silently per plan
-    shutil.copytree(src, dest)
+
+    # Handle an existing install. Only rmtree a regular dir; if it's already a
+    # symlink, just unlink it (don't follow into workbench and delete files).
+    if dest.is_symlink():
+        dest.unlink()
+    elif dest.exists():
+        shutil.rmtree(dest)
+
+    if symlink:
+        try:
+            os.symlink(src.resolve(), dest, target_is_directory=True)
+        except OSError as exc:
+            print(
+                _red(
+                    f"Symlink failed ({exc}). On Windows this typically needs developer mode or admin. "
+                    f"Retry without --symlink to use copy mode."
+                )
+            )
+            return 3
+    else:
+        shutil.copytree(src, dest)
 
     scope = "project" if project else "global"
-    print(_green(f"Installed {_cyan(skill_id)} for {_bold(agent)} ({scope})"))
+    link_mode = "symlink" if symlink else "copy"
+    print(_green(f"Installed {_cyan(skill_id)} for {_bold(agent)} ({scope}, {link_mode})"))
     print(f"  {dest}")
+
+    # --with-env provisioning (D2). Skip by default in symlink mode so we don't
+    # create a .venv in the workbench source; the user can opt in explicitly.
+    if with_env != "none":
+        env_dir = dest if not symlink else src
+        rc = _provision_skill_env(env_dir, mode=with_env)
+        if rc != 0:
+            return rc
+
+    return 0
+
+
+def _provision_skill_env(skill_dir: Path, *, mode: str) -> int:
+    """Run `uv sync` or `python -m venv + pip install -e .` inside `skill_dir`.
+
+    `mode` is one of auto | uv | venv | none. `none` is a no-op.
+    `auto` picks uv when available, else venv, else prints the manual command.
+    """
+    import shutil
+    import subprocess
+
+    if mode == "none":
+        return 0
+
+    uv_path = shutil.which("uv")
+
+    if mode == "uv" and not uv_path:
+        print(_red("--with-env uv requested but `uv` is not on PATH."))
+        return 4
+
+    if mode == "auto" and not uv_path:
+        # Fall back to venv if python is available, else bail with a hint.
+        mode = "venv"
+
+    if mode in ("uv", "auto") and uv_path:
+        print(_bold(f"Provisioning environment via `uv sync` in {skill_dir} …"))
+        rc = subprocess.call([uv_path, "sync"], cwd=str(skill_dir))
+        if rc != 0:
+            print(_red(f"`uv sync` failed with exit code {rc}."))
+            return rc
+        print(_green("Environment ready."))
+        return 0
+
+    # venv fallback
+    python_cmd = shutil.which("python3") or shutil.which("python")
+    if not python_cmd:
+        print(
+            _red(
+                "Neither `uv` nor `python` is on PATH. Run one of the following inside "
+                f"{skill_dir}:\n  uv sync\n  python -m venv .venv && .venv/bin/pip install -e ."
+            )
+        )
+        return 5
+
+    print(_bold(f"Provisioning environment via venv+pip in {skill_dir} …"))
+    venv_rc = subprocess.call([python_cmd, "-m", "venv", ".venv"], cwd=str(skill_dir))
+    if venv_rc != 0:
+        print(_red(f"venv creation failed with exit code {venv_rc}."))
+        return venv_rc
+    pip_path = str(skill_dir / ".venv" / "bin" / "pip")
+    pip_rc = subprocess.call([pip_path, "install", "-e", "."], cwd=str(skill_dir))
+    if pip_rc != 0:
+        print(_red(f"`pip install -e .` failed with exit code {pip_rc}."))
+        return pip_rc
+    print(_green("Environment ready."))
     return 0
 
 
@@ -3954,6 +4283,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     skill_show_p = skill_sub.add_parser("show", help="Print skill manifest + SKILL.md preview")
     skill_show_p.add_argument("skill_id", help="Skill ID")
+    skill_show_p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run each operation with --help as a smoke test; fail fast on import errors / missing deps",
+    )
 
     skill_install_p = skill_sub.add_parser(
         "install", help="Install skill into a specific agent's skills directory"
@@ -3972,6 +4306,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "--project",
         action="store_true",
         help="Install to the project-scoped path for this agent (e.g. .claude/skills/, .agents/skills/) instead of the global path",
+    )
+    skill_install_p.add_argument(
+        "--symlink",
+        action="store_true",
+        help="Symlink the install path to the workbench source for in-place dev iteration (edits propagate both ways)",
+    )
+    skill_install_p.add_argument(
+        "--with-env",
+        choices=("auto", "uv", "venv", "none"),
+        default="none",
+        help=(
+            "Provision a Python virtualenv inside the installed skill so its deps are available. "
+            "`auto` tries uv, falls back to venv. In --symlink mode the env lands in the workbench source."
+        ),
+    )
+
+    skill_docs_p = skill_sub.add_parser(
+        "docs", help="Regenerate SKILL.md + API.md from manifest, preserving custom-fenced regions"
+    )
+    skill_docs_p.add_argument("skill_id", help="Skill ID")
+    skill_docs_p.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero if docs differ from regeneration; do not overwrite",
     )
 
     skill_uninstall_p = skill_sub.add_parser("uninstall", help="Uninstall a skill")
@@ -4181,13 +4539,14 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
 def _dispatch_skill(args: argparse.Namespace) -> int:
     cmd = getattr(args, "skill_command", None)
     if cmd is None:
-        print("Usage: noui skill {list,show,install,uninstall}")
+        print("Usage: noui skill {list,show,install,uninstall,docs}")
         return 1
     dispatch = {
         "list": cmd_skill_list,
         "show": cmd_skill_show,
         "install": cmd_skill_install,
         "uninstall": cmd_skill_uninstall,
+        "docs": cmd_skill_docs,
     }
     fn = dispatch.get(cmd)
     if fn is None:
