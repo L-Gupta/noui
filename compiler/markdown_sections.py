@@ -58,11 +58,7 @@ def merge_custom_sections(existing: str, new: str) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group("name")
         if name in existing_regions:
-            return (
-                f"<!-- custom:start:{name} -->"
-                f"{existing_regions[name]}"
-                f"<!-- custom:end:{name} -->"
-            )
+            return f"<!-- custom:start:{name} -->{existing_regions[name]}<!-- custom:end:{name} -->"
         return match.group(0)
 
     return _FENCE_RE.sub(replace, new)

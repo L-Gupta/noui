@@ -114,7 +114,9 @@ def generate_api_markdown(
     lines.append("## Notes")
     lines.append("")
     lines.append("<!-- custom:start:api-notes -->")
-    lines.append("<!-- Add hand-written API notes here; this region survives `mcp docs` / `skill docs`. -->")
+    lines.append(
+        "<!-- Add hand-written API notes here; this region survives `mcp docs` / `skill docs`. -->"
+    )
     lines.append("<!-- custom:end:api-notes -->")
     lines.append("")
 

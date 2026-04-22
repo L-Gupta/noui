@@ -150,9 +150,7 @@ def compile_workflow_to_skill(
         f'version = "0.1.0"\n'
         f'description = "NoUI-generated skill for {app_name}."\n'
         f'requires-python = ">=3.11"\n'
-        f"dependencies = [\n"
-        + "".join(f"    {d},\n" for d in pyproject_deps)
-        + "]\n"
+        f"dependencies = [\n" + "".join(f"    {d},\n" for d in pyproject_deps) + "]\n"
         "\n"
         "[tool.uv]\n"
         "package = false\n"

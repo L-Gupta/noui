@@ -271,7 +271,9 @@ def _render_body(
         )
     sections.append("")
     sections.append("<!-- custom:start:prerequisites -->")
-    sections.append("<!-- Add skill-specific prereqs here; this region survives `noui skill docs`. -->")
+    sections.append(
+        "<!-- Add skill-specific prereqs here; this region survives `noui skill docs`. -->"
+    )
     sections.append("<!-- custom:end:prerequisites -->")
     sections.append("")
 
@@ -305,7 +307,9 @@ def _render_body(
     )
     sections.append("")
     sections.append("<!-- custom:start:troubleshooting -->")
-    sections.append("<!-- Add hand-written troubleshooting notes here; this region survives `noui skill docs`. -->")
+    sections.append(
+        "<!-- Add hand-written troubleshooting notes here; this region survives `noui skill docs`. -->"
+    )
     sections.append("<!-- custom:end:troubleshooting -->")
     sections.append("")
 
@@ -331,7 +335,9 @@ def _render_body(
     return "\n".join(sections)
 
 
-def _render_operation_section(td: dict, *, python_executable: str = ".venv/bin/python") -> list[str]:
+def _render_operation_section(
+    td: dict, *, python_executable: str = ".venv/bin/python"
+) -> list[str]:
     name = td["name"]
     description = td.get("description", name)
     params: list[dict] = td.get("params", [])
