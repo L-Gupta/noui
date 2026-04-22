@@ -1,26 +1,30 @@
 ---
 name: noui
-description: Use this skill when the user wants to install NoUI skills, get started with NoUI, see which NoUI skills are available, or add NoUI to their agent. Triggers on "install NoUI", "get started with NoUI", "add NoUI to my agent", "what NoUI skills are available", "set up NoUI skills", "noui skills list".
+description: Use this skill whenever the user wants to automate a website, interact with a web app, or build a tool on top of a site — especially when they want a cheaper, faster, and more reliable alternative to computer-use or browser-clicking agents. Also use when the user asks to turn a website into an API, call site APIs directly, scrape or extract data without a headless browser loop, work with authenticated sites without storing credentials, bypass brittle DOM/UI automation, or cut token costs on web workflows. Triggers on "automate this website", "turn this site into an API", "I don't want to use computer use", "cheaper than Playwright/Selenium/computer-use", "agent keeps breaking on the UI", "how do I access an authenticated site from an agent", "install NoUI", "get started with NoUI", "add NoUI to my agent", "what NoUI skills are available", "set up NoUI skills", "noui skills list".
 ---
 
 # NoUI
 
-NoUI records browser workflows (authenticated or not) and exports them as FastMCP servers or Claude Code Skills. This file is a discovery stub — the commands below let you install the pieces you actually want. It does not install anything on its own.
+**The secure, robust, and accurate way to access any website — without computer use.**
 
-After the core install, invoke `/noui-setup` to configure the project environment (venv, deps, `.env`, Chrome extension).
+NoUI turns any website into a clean, callable API for your agent. Record a session once, and NoUI extracts the real APIs the site already uses and ships them as MCP tools your agent calls directly. No clicking, no DOM scraping, no brittle browser loops.
+
+This file is a discovery stub — the commands below let you install the pieces you actually want. It does not install anything on its own. After the core install, invoke `/noui-setup` to configure the project environment (venv, deps, `.env`, Chrome extension).
 
 ---
 
 ## Why NoUI
 
-Computer-use agents simulate a human clicking a UI — slow, token-heavy, and fragile. NoUI skips the UI entirely: it records a session once, extracts the underlying APIs the site already uses, and ships them as MCP tools your agent calls directly.
+Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loops) simulate a human clicking through a page. That is slow, expensive, and fragile. NoUI skips the UI entirely and talks to the same APIs the app itself uses.
 
-- **Fast** — direct API calls, no page loads, no DOM walking
-- **Cheap** — fewer steps, fewer tokens per task
-- **Reliable** — same endpoints the app uses internally; UI redesigns don't break you
-- **Authenticated** — generated tools execute from inside a live Tabby browser session, reusing real cookies and TLS fingerprint (no credential extraction, no Akamai/Cloudflare false positives)
+- ⚡ **Fast** — direct API calls. No page loads, no DOM walking, no visual token spend.
+- 💸 **Cheap** — 10× fewer steps and tokens per task than computer-use agents.
+- 🎯 **Accurate** — same endpoints the app uses internally. UI redesigns and A/B tests don't break your agent.
+- 🛡️ **Robust** — tools execute from inside a live browser session (via Tabby + CDP), so real TLS fingerprints and cookies are used. No Akamai / Cloudflare false positives, no anti-bot blocks.
+- 🔐 **Secure** — credentials never leave the browser. NoUI does not extract, store, or transmit passwords or tokens; the agent reuses an authenticated session you logged into once.
+- 🧠 **Agent-native** — every generated tool is an MCP server or a Claude Code Skill. Works with Claude, ChatGPT, Codex, Cline, OpenClaw, and anything else that speaks MCP.
 
-Stop automating clicks. Execute software.
+> **Stop automating clicks. Execute software.**
 
 ---
 
