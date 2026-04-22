@@ -34,13 +34,18 @@ Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loop
 This skill is instruction-only — it runs no code itself. Following its install commands will:
 
 - **Download skill files from `github.com/adoptai/noui`** via `npx skills add`. The `adoptai` organization is the project's official home; the repo is public and open source. Review the source (or pin to a commit SHA: `npx skills add https://github.com/adoptai/noui@<sha> --skill <name>`) before running in a sensitive environment.
-- **Write skill markdown files to `.agents/skills/` in your current project** (or `~/.claude/skills/` for user-scoped installs). These are prompt files — no binaries, no post-install scripts.
+- **Write skill markdown files to `.agents/skills/` in your current project** (or `~/.claude/skills/` for user-scoped installs). The skill files themselves are prompt-only markdown — no binaries, no post-install scripts. The *broader NoUI stack* installed by `/noui-setup` (below) does introduce local services.
 - **Guide you to clone the main `noui` repository** (`/noui-setup` handles this). The repo installs:
   - A FastAPI backend on `localhost:8002`
   - A Chrome extension loaded unpacked from `noui/extension/` for workflow recording
   - **Tabby** — a locally-running Docker Compose service (bundled as a git submodule) that hosts persistent browser sessions and exposes a CDP endpoint on `localhost:9222`. Tabby is local; it is not a hosted NoUI service.
   - Generated FastMCP servers, which bind local ports so agents can connect to them.
-- **Access your local browser session** during recording and tool execution. You log into the target site once inside the local Tabby Chromium container; cookies, tokens, and TLS fingerprint stay there. Generated Python uses CDP `Runtime.evaluate` to call `fetch()` *inside* the authenticated browser — NoUI-generated code does not read, upload, or persist your credentials.
+- **Runtime prerequisites** not installed by this skill and not declared in its frontmatter: `git`, `npx`/`npm` (Node), Docker + Docker Compose, and a Chromium-based browser for loading the unpacked extension. Python 3.11+. Install and restrict these yourself before running `/noui-setup`.
+- **Environment variables** used by the broader stack (configured in the cloned repo's `.env`, not by the skill installer):
+  - `TABBY_API_HOST`, `TABBY_ADMIN_TOKEN` — optional; only needed when provisioning Tabby for authenticated flows.
+  - `NOUI_PORT` — optional backend port override (default `8002`).
+- **Local port exposure** — all services are intended to be local-only, but bindings are controlled by the cloned repo's config, not by this skill. Review and, if necessary, restrict: FastAPI host in the backend launcher, the `ports:` stanza in Tabby's `docker-compose.yml`, and each generated MCP server's bind address before starting it. Do not expose these on a public interface without an auth proxy.
+- **Access your local browser session** during recording and tool execution. You log into the target site once inside the local Tabby Chromium container; cookies, tokens, and TLS fingerprint stay there. Generated Python uses CDP `Runtime.evaluate` to call `fetch()` *inside* the authenticated browser — NoUI-generated code is designed not to read, upload, or persist your credentials. This is a design goal to verify against the source, not a guarantee.
 - **Write artifacts to `workbench/`** inside the cloned repo: `login_recordings/`, `mcp_servers/<app>/<server_id>/`, and `skills/<app>/<skill_id>/`. Nothing is uploaded to `adoptai.ai` or any third-party service.
 
 ### Before installing in an environment with sensitive accounts
