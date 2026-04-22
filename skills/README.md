@@ -6,15 +6,21 @@ Compatible with any agent that supports the [Skills](https://github.com/vercel-l
 
 ## Installation
 
-```bash
-npx skills add adoptai/noui
-```
-
-Or install a specific skill only:
+Start with the entry-point skill — it's a discovery guide that lists every other skill with per-skill install commands:
 
 ```bash
-npx skills add adoptai/noui -s setup
+npx skills add https://github.com/adoptai/noui --skill noui
 ```
+
+Then invoke `/noui` in your agent and follow the install commands it prints.
+
+Install any specific skill directly:
+
+```bash
+npx skills add https://github.com/adoptai/noui --skill noui-setup
+```
+
+> **Human users** can run `npx skills add https://github.com/adoptai/noui` (no `--skill` flag) to open an interactive picker. AI agents must use the per-skill `--skill <name>` form — the picker blocks on stdin.
 
 `npx skills add` installs these NoUI meta-skills to `.agents/skills/` in your current project by default; they become available as slash commands immediately. (That's the Vercel Labs convention. **Generated** skills produced by `workflow export --as skill` are a separate thing — they're managed via `noui skill install <id> <agent>` and can target Claude Code, Codex, Cline, OpenCode, or the shared `.agents/skills/` path. See `/noui-generate-skill` for details.)
 
