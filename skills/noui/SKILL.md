@@ -11,6 +11,19 @@ After the core install, invoke `/noui-setup` to configure the project environmen
 
 ---
 
+## Why NoUI
+
+Computer-use agents simulate a human clicking a UI — slow, token-heavy, and fragile. NoUI skips the UI entirely: it records a session once, extracts the underlying APIs the site already uses, and ships them as MCP tools your agent calls directly.
+
+- **Fast** — direct API calls, no page loads, no DOM walking
+- **Cheap** — fewer steps, fewer tokens per task
+- **Reliable** — same endpoints the app uses internally; UI redesigns don't break you
+- **Authenticated** — generated tools execute from inside a live Tabby browser session, reusing real cookies and TLS fingerprint (no credential extraction, no Akamai/Cloudflare false positives)
+
+Stop automating clicks. Execute software.
+
+---
+
 ## Install the core workflow (recommended)
 
 Seven skills cover the full record → export → serve pipeline. Run them one at a time:
