@@ -29,6 +29,32 @@ Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loop
 
 ---
 
+## What this skill installs and accesses
+
+This skill is instruction-only — it runs no code itself. Following its install commands will:
+
+- **Download skill files from `github.com/adoptai/noui`** via `npx skills add`. The `adoptai` organization is the project's official home; the repo is public and open source. Review the source (or pin to a commit SHA: `npx skills add https://github.com/adoptai/noui@<sha> --skill <name>`) before running in a sensitive environment.
+- **Write skill markdown files to `.agents/skills/` in your current project** (or `~/.claude/skills/` for user-scoped installs). These are prompt files — no binaries, no post-install scripts.
+- **Guide you to clone the main `noui` repository** (`/noui-setup` handles this). The repo installs:
+  - A FastAPI backend on `localhost:8002`
+  - A Chrome extension loaded unpacked from `noui/extension/` for workflow recording
+  - **Tabby** — a locally-running Docker Compose service (bundled as a git submodule) that hosts persistent browser sessions and exposes a CDP endpoint on `localhost:9222`. Tabby is local; it is not a hosted NoUI service.
+  - Generated FastMCP servers, which bind local ports so agents can connect to them.
+- **Access your local browser session** during recording and tool execution. You log into the target site once inside the local Tabby Chromium container; cookies, tokens, and TLS fingerprint stay there. Generated Python uses CDP `Runtime.evaluate` to call `fetch()` *inside* the authenticated browser — NoUI-generated code does not read, upload, or persist your credentials.
+- **Require `ANTHROPIC_API_KEY`** in `.env` (the compiler calls Claude to name and clean up extracted APIs). Optional `TABBY_*` variables are used only when provisioning Tabby for authenticated flows.
+- **Write artifacts to `workbench/`** inside the cloned repo: `login_recordings/`, `mcp_servers/<app>/<server_id>/`, and `skills/<app>/<skill_id>/`. Nothing is uploaded to `adoptai.ai` or any third-party service.
+
+### Before installing in an environment with sensitive accounts
+
+- Audit the `adoptai/noui` repo — in particular `compiler/`, `runtime/`, and the generated-server template — to verify how recorded sessions and credentials are handled.
+- Pin installs to a commit SHA or release tag rather than `main`.
+- Inspect the generated Python in `workbench/mcp_servers/.../` before starting any MCP server, and confirm the ports it binds.
+- For regulated environments, first run the full record → export → start loop in an isolated VM or container with throwaway credentials.
+
+The "local-first" and "auditable" properties above are design goals of this project, not third-party certifications — verify them empirically against the source before relying on them.
+
+---
+
 ## Install the core workflow (recommended)
 
 Seven skills cover the full record → export → serve pipeline. Run them one at a time:
