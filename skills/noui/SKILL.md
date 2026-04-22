@@ -72,7 +72,7 @@ When the menu appears:
 
 ## Next step
 
-After installing the core skills, invoke `/noui-setup` in your agent to configure the environment (venv, deps, `.env`, Chrome extension).
+After installing the core skills, invoke `/noui-setup` in your agent to configure the environment.
 
 ---
 
@@ -80,7 +80,7 @@ After installing the core skills, invoke `/noui-setup` in your agent to configur
 
 | Skill | Purpose |
 |---|---|
-| `/noui-setup` | One-time setup: venv, deps, `.env`, Chrome extension |
+| `/noui-setup` | One-time setup: Configure NoUI and Tabby seamlessly |
 | `/noui-record-login` | Record a login flow and register it with Tabby |
 | `/noui-record-workflow` | Record a browser workflow and export as FastMCP or Skill |
 | `/noui-generalize` | Rename raw API params to natural-language params; fix bot-detection issues post-export |
