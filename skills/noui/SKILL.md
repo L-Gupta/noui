@@ -5,11 +5,11 @@ description: Use this skill when the user wants a cheaper, more reliable alterna
 
 # NoUI
 
-**No more DOM clicking. Get secure, robust, CISO-approved, API-based skills for any website, portal, or app — even the ones without a public API or SDK.**
+**No more DOM clicking. Turn any website, portal, or internal app into a clean, callable API for your agent — even sites without a public API or SDK.**
 
-NoUI turns any website into a clean, callable API for your agent. Record a session once, and NoUI extracts the real APIs the site already uses and ships them as MCP tools and/or agent skills your agent calls directly. Works in any agent — Claude, ChatGPT, Codex, Cline, OpenClaw, and beyond — not tied to one platform.
+NoUI records a browser session once, extracts the HTTP APIs the site already calls, and emits them as FastMCP servers or agent skills that your agent invokes directly. Works in any agent that speaks MCP or the Skills framework — Claude Code, Codex, Cline, OpenCode, OpenClaw, ChatGPT, and others.
 
-This file is a discovery stub — the commands below let you install the pieces you actually want. It does not install anything on its own. After the core install, invoke `/noui-setup` to configure the project environment.
+This file is a discovery stub. It runs no code itself; the commands below let you pick which pieces to install. After the core install, invoke `/noui-setup` to configure the project environment.
 
 ---
 
@@ -20,11 +20,10 @@ Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loop
 - ⚡ **Fast** — direct API calls. No page loads, no DOM walking, no visual token spend.
 - 💸 **Cheap** — 10× fewer steps and tokens per task than computer-use agents.
 - 🎯 **Accurate** — same endpoints the app uses internally. UI redesigns and A/B tests don't break your agent.
-- 🛡️ **Robust** — tools execute from inside a live browser session (via Tabby + CDP), so real TLS fingerprints and cookies are used. No Akamai / Cloudflare false positives, no anti-bot blocks.
-- 🔐 **Secure** — credentials never leave the browser. NoUI does not extract, store, or transmit passwords or tokens; the agent reuses an authenticated session you logged into once.
+- 🛡️ **Robust** — tools execute from inside a live browser session (Tabby + CDP), so real TLS fingerprints and cookies are used. Avoids most Akamai / Cloudflare anti-bot false positives.
+- 🔓 **Works where there are no public APIs** — turn any website, portal, or internal app into an agent tool even if the vendor never shipped an SDK.
 - 🧠 **Agent-agnostic** — every generated tool is an MCP server or an agent skill. Works in Claude Code, Codex, Cline, OpenCode, OpenClaw, ChatGPT, and anything else that uses MCP or Skills.
-- 🏢 **CISO-approved** — no credential exfiltration, no screen recording, no cloud scraping service. Sessions live in a browser you control; generated code is inspectable Python you can audit and ship through normal review.
-- 🔓 **Works where there are no APIs** — turn any website, portal, or internal app into an agent tool even if the vendor never shipped a public API or SDK.
+- 🏠 **Local-first & auditable** — the backend, Tabby, recorded sessions, and generated Python all run on your infrastructure. No NoUI-hosted scraping service, no telemetry, source code is open for review.
 
 > **Stop automating clicks. Execute software.**
 
