@@ -55,6 +55,7 @@ def _compile(
     session_name: str = "Example Workflow",
     profile_slug: str = "",
     description_override: str = "",
+    execution_mode: str = "cdp",
 ) -> tuple[Path, dict]:
     tmp = Path(tempfile.mkdtemp())
     manifest = compile_workflow_to_skill(
@@ -68,6 +69,7 @@ def _compile(
         url_events=[],
         output_dir=str(tmp),
         description_override=description_override,
+        execution_mode=execution_mode,
     )
     return tmp, manifest
 
@@ -297,3 +299,122 @@ class TestSharedRuntime:
         skill_auth = (skill_out / "noui_runtime" / "auth.py").read_bytes()
         mcp_auth = (mcp_out / "noui_runtime" / "auth.py").read_bytes()
         assert skill_auth == mcp_auth
+
+    def test_cdp_py_matches_mcp_output(self) -> None:
+        """noui_runtime/cdp.py must be byte-identical for skill and MCP outputs."""
+        from compiler.mcp.server_generator import compile_workflow
+
+        har = _har([_entry("https://api.example.com/v1/widgets")])
+        skill_out = Path(tempfile.mkdtemp())
+        mcp_out = Path(tempfile.mkdtemp())
+        compile_workflow_to_skill(
+            session_id="abcdef12-3456-7890-abcd-ef1234567890",
+            session_name="Example",
+            app_slug="example",
+            tabby_profile_id="",
+            har=har,
+            click_events=[],
+            url_events=[],
+            output_dir=str(skill_out),
+        )
+        compile_workflow(
+            session_id="abcdef12-3456-7890-abcd-ef1234567890",
+            session_name="Example",
+            app_slug="example",
+            tabby_profile_id="",
+            har=har,
+            click_events=[],
+            url_events=[],
+            output_dir=str(mcp_out),
+        )
+        skill_cdp = (skill_out / "noui_runtime" / "cdp.py").read_bytes()
+        mcp_cdp = (mcp_out / "noui_runtime" / "cdp.py").read_bytes()
+        assert skill_cdp == mcp_cdp
+
+
+# ---------------------------------------------------------------------------
+# Execution mode — CDP default and HTTP opt-in
+# ---------------------------------------------------------------------------
+
+
+class TestSkillCdpDefault:
+    """Skill compiler must match the MCP compiler's CDP default."""
+
+    def test_cdp_runtime_written(self) -> None:
+        out, _ = _compile(_har([_entry("https://api.example.com/v1/widgets")]))
+        assert (out / "noui_runtime" / "cdp.py").is_file()
+
+    def test_operations_import_cdp(self) -> None:
+        out, manifest = _compile(_har([_entry("https://api.example.com/v1/widgets?id=1")]))
+        op_name = manifest["operations"][0]["name"]
+        src = (out / "operations" / f"{op_name}.py").read_text()
+        assert "from noui_runtime.cdp import" in src
+        assert "cdp_fetch" in src
+        assert "import httpx" not in src
+        assert "resolve_auth" not in src
+
+    def test_manifest_execution_strategy_cdp(self) -> None:
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/widgets",
+                    request_headers=[{"name": "Authorization", "value": "Bearer t"}],
+                )
+            ]
+        )
+        _, manifest = _compile(har, profile_slug="example")
+        assert manifest["auth"]["execution_strategy"] == "cdp_browser_session"
+
+
+class TestSkillHttpExecutionMode:
+    """execution_mode='http' keeps the legacy template."""
+
+    def test_operations_use_httpx(self) -> None:
+        out, manifest = _compile(
+            _har(
+                [
+                    _entry(
+                        "https://api.example.com/widgets",
+                        request_headers=[{"name": "Authorization", "value": "Bearer t"}],
+                    )
+                ]
+            ),
+            profile_slug="example",
+            execution_mode="http",
+        )
+        op_name = manifest["operations"][0]["name"]
+        src = (out / "operations" / f"{op_name}.py").read_text()
+        assert "import httpx" in src
+        assert "resolve_auth" in src
+        assert "from noui_runtime.cdp" not in src
+
+    def test_no_cdp_runtime_written(self) -> None:
+        out, _ = _compile(
+            _har([_entry("https://api.example.com/widgets")]),
+            execution_mode="http",
+        )
+        assert not (out / "noui_runtime" / "cdp.py").exists()
+
+    def test_manifest_execution_strategy_mirrors_auth_strategy(self) -> None:
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/widgets",
+                    request_headers=[{"name": "Authorization", "value": "Bearer t"}],
+                )
+            ]
+        )
+        _, manifest = _compile(har, profile_slug="example", execution_mode="http")
+        auth = manifest["auth"]
+        assert auth["execution_strategy"] == auth["strategy"]
+
+
+class TestSkillExecutionModeValidation:
+    def test_invalid_mode_raises(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match="execution_mode"):
+            _compile(
+                _har([_entry("https://api.example.com/widgets")]),
+                execution_mode="grpc",
+            )

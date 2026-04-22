@@ -7,6 +7,8 @@ description: Use this skill when the user wants to record a login flow for an au
 
 Record a login flow for an authenticated app and register it with Tabby to produce a `tabby_profile_id`. That ID is required when exporting a workflow as a FastMCP server for an app that needs authentication.
 
+**Runtime prerequisite:** the CDP-default execution path (see `/noui-record-workflow` → *How Execution Works*) needs a live Tabby browser session with the app loaded *at invocation time*, not only during recording. Plan to keep Tabby running wherever the generated MCP server or Skill is used.
+
 All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`.
 
 **Prerequisite:** `/noui-setup` must be complete — venv installed, `.env` configured with `ANTHROPIC_API_KEY`, `TABBY_API_HOST`, and `TABBY_ADMIN_TOKEN`, Chrome extension loaded.

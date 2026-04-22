@@ -87,6 +87,7 @@ def _compile(
     profile_slug: str = "",
     profile_db_id: str = "",
     tabby_profile_id: str = "",
+    execution_mode: str = "cdp",
 ) -> tuple[dict, dict[str, str]]:
     """Run compile_workflow into a temp dir; return (manifest, {rel_path: content})."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -102,6 +103,7 @@ def _compile(
             output_dir=str(out),
             profile_slug=profile_slug,
             profile_db_id=profile_db_id,
+            execution_mode=execution_mode,
         )
         # Copy the whole tree into a stable dict of {relative_path: content}
         files = {
@@ -204,14 +206,21 @@ class TestStaticApiKeyApp:
             "runtime_identifier must be the slug, never the UUID"
         )
 
-    def test_operations_use_resolve_auth(self) -> None:
+    def test_operations_use_cdp_fetch(self) -> None:
+        """Default execution mode (cdp) wires operations through noui_runtime.cdp."""
         for path, content in self.files.items():
             if (
                 path.startswith("operations/")
                 and path.endswith(".py")
                 and path != "operations/__init__.py"
             ):
-                assert "resolve_auth" in content, f"{path} must call resolve_auth()"
+                assert "from noui_runtime.cdp import" in content, (
+                    f"{path} must import from noui_runtime.cdp under CDP default"
+                )
+                assert "cdp_fetch" in content, f"{path} must call cdp_fetch()"
+                assert "resolve_auth" not in content, (
+                    f"{path}: resolve_auth() must not be used under CDP default"
+                )
                 assert "TABBY_PROFILE_ID" not in content, (
                     f"{path}: TABBY_PROFILE_ID constant must not be embedded"
                 )
@@ -489,3 +498,112 @@ class TestOutputFiles:
 
     def test_noui_runtime_init_present(self) -> None:
         assert "noui_runtime/__init__.py" in self.files
+
+
+# ---------------------------------------------------------------------------
+# Scenario 10: CDP execution mode is the default
+# ---------------------------------------------------------------------------
+
+
+class TestCdpIsDefault:
+    """Not passing execution_mode must produce CDP-based operations and a cdp.py runtime."""
+
+    def setup_method(self) -> None:
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/items",
+                    request_headers=[_auth_header("Bearer tok"), _accept_header()],
+                    status=200,
+                )
+            ]
+        )
+        self.manifest, self.files = _compile(har, app_slug="defapp", profile_slug="defapp")
+
+    def test_cdp_runtime_module_written(self) -> None:
+        assert "noui_runtime/cdp.py" in self.files, "CDP default must write noui_runtime/cdp.py"
+
+    def test_operations_import_cdp(self) -> None:
+        op_paths = [
+            p
+            for p in self.files
+            if p.startswith("operations/") and p.endswith(".py") and p != "operations/__init__.py"
+        ]
+        assert op_paths, "expected at least one operation"
+        for p in op_paths:
+            assert "from noui_runtime.cdp import" in self.files[p]
+            assert "cdp_fetch" in self.files[p]
+
+    def test_no_httpx_in_operations(self) -> None:
+        for p, content in self.files.items():
+            if p.startswith("operations/") and p.endswith(".py") and p != "operations/__init__.py":
+                assert "import httpx" not in content, (
+                    f"{p}: httpx must not appear in CDP-default operations"
+                )
+
+    def test_manifest_execution_strategy_is_cdp(self) -> None:
+        assert self.manifest["auth"]["execution_strategy"] == "cdp_browser_session"
+
+    def test_manifest_auth_strategy_unchanged(self) -> None:
+        """auth.strategy continues to describe the credential-source strategy."""
+        assert self.manifest["auth"]["strategy"] == "static_secret_header"
+
+    def test_cdp_runtime_compiles(self) -> None:
+        import py_compile
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(self.files["noui_runtime/cdp.py"])
+            path = f.name
+        py_compile.compile(path, doraise=True)
+
+
+# ---------------------------------------------------------------------------
+# Scenario 11: execution_mode="http" preserves the legacy template
+# ---------------------------------------------------------------------------
+
+
+class TestHttpExecutionMode:
+    """Legacy opt-in: httpx + resolve_auth, no cdp.py written, execution_strategy mirrors auth.strategy."""
+
+    def setup_method(self) -> None:
+        har = _har(
+            [
+                _entry(
+                    "https://api.example.com/items",
+                    request_headers=[_auth_header("Bearer tok"), _accept_header()],
+                    status=200,
+                )
+            ]
+        )
+        self.manifest, self.files = _compile(
+            har, app_slug="httpapp", profile_slug="httpapp", execution_mode="http"
+        )
+
+    def test_operations_use_httpx(self) -> None:
+        for p, content in self.files.items():
+            if p.startswith("operations/") and p.endswith(".py") and p != "operations/__init__.py":
+                assert "import httpx" in content
+                assert "resolve_auth" in content
+                assert "from noui_runtime.cdp" not in content
+
+    def test_no_cdp_runtime_written(self) -> None:
+        assert "noui_runtime/cdp.py" not in self.files
+
+    def test_manifest_execution_strategy_mirrors_auth_strategy(self) -> None:
+        auth = self.manifest["auth"]
+        assert auth["execution_strategy"] == auth["strategy"]
+
+
+# ---------------------------------------------------------------------------
+# Scenario 12: execution_mode validation
+# ---------------------------------------------------------------------------
+
+
+class TestExecutionModeValidation:
+    def test_invalid_mode_raises(self) -> None:
+        import pytest
+
+        har = _har([_entry("https://api.example.com/x")])
+        with pytest.raises(ValueError, match="execution_mode"):
+            _compile(har, app_slug="bad", execution_mode="grpc")

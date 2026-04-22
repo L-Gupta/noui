@@ -1072,6 +1072,7 @@ def cmd_workflow_export(args: argparse.Namespace) -> int:
     profile_db_id: str = getattr(args, "profile_db_id", "")
     capture_session_id: str = getattr(args, "capture_session", "")
     description_override: str = getattr(args, "description_override", "")
+    execution_mode: str = getattr(args, "execution_mode", "cdp")
     do_verify: bool = getattr(args, "verify", False)
 
     if target not in ("mcp", "skill", "both"):
@@ -1080,7 +1081,7 @@ def cmd_workflow_export(args: argparse.Namespace) -> int:
 
     from urllib.parse import quote_plus
 
-    params: list[str] = [f"as={target}"]
+    params: list[str] = [f"as={target}", f"execution_mode={execution_mode}"]
     if profile_id:
         params.append(f"tabby_profile_id={profile_id}")
     if profile_slug:
@@ -1473,8 +1474,9 @@ def cmd_autopilot_export(args: argparse.Namespace) -> int:
     wf_id = args.workflow_session_id
     cs_id = args.capture_session_id
     profile_slug = getattr(args, "profile_slug", "")
+    execution_mode = getattr(args, "execution_mode", "cdp")
 
-    params = [f"capture_session_id={cs_id}", "as=mcp"]
+    params = [f"capture_session_id={cs_id}", "as=mcp", f"execution_mode={execution_mode}"]
     if profile_slug:
         params.append(f"profile_slug={profile_slug}")
     path = f"/workflow-sessions/{wf_id}/export?" + "&".join(params)
@@ -3887,6 +3889,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Run auth verification after MCP export; report PASS/NEEDS_SECRET before install",
     )
+    wf_export.add_argument(
+        "--execution-mode",
+        default="cdp",
+        choices=["cdp", "http"],
+        dest="execution_mode",
+        help=(
+            "Execution strategy: 'cdp' (default, runs inside Tabby's browser) "
+            "or 'http' (legacy httpx + resolve_auth)"
+        ),
+    )
 
     # --- mcp ---
     mcp_parser = sub.add_parser("mcp", help="Generated MCP server commands")
@@ -4014,6 +4026,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_export.add_argument("workflow_session_id", help="Workflow session ID")
     ap_export.add_argument("capture_session_id", help="Capture session ID")
     ap_export.add_argument("--profile-slug", default="", help="Tabby profile slug for auth")
+    ap_export.add_argument(
+        "--execution-mode",
+        default="cdp",
+        choices=["cdp", "http"],
+        dest="execution_mode",
+        help=(
+            "Execution strategy: 'cdp' (default, runs inside Tabby's browser) "
+            "or 'http' (legacy httpx + resolve_auth)"
+        ),
+    )
 
     # Browser command passthrough — lets Claude Code drive the browser from the CLI
     ap_browser = ap_sub.add_parser("browser", help="Execute a browser command via the extension")

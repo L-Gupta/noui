@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default execution mode for generated MCP servers and Skills is now CDP
+  browser execution** (`--execution-mode cdp`). Generated operations open a
+  WebSocket to Tabby's CDP endpoint (`localhost:9222`), locate the tab for the
+  recorded domain, and call `fetch(url, {credentials: 'include'})` via
+  `Runtime.evaluate` — cookies and TLS fingerprint come from the real
+  authenticated browser. Sidesteps Akamai / Cloudflare false positives that
+  fire on Python HTTP clients.
+- `auth.execution_strategy` added to `manifest.json` (additive, non-breaking).
+  `"cdp_browser_session"` under the default; mirrors `auth.strategy` under
+  `--execution-mode http`. Existing readers of `auth.strategy` are unaffected.
+- `/noui-record-workflow` skill now documents the CDP default under *How
+  Execution Works*; `/noui-generalize` reframed around hand-edit cases on top
+  of the default (SPA DOM scraping, HITL login).
+
+### Added
+
+- `compiler/runtime/cdp_adapter.py` — generates `noui_runtime/cdp.py` in every
+  compiled output, exposing `find_page`, `cdp_eval`, `cdp_fetch`.
+- `--execution-mode {cdp,http}` flag on `noui workflow export` and
+  `noui autopilot export`; corresponding query param on the backend export
+  endpoint.
+- Explicit `httpx` and `websockets` runtime dependencies in `pyproject.toml`
+  (were previously transitive).
+- 18 new tests covering CDP-default invariants and the `--execution-mode http`
+  opt-in for both MCP and Skill outputs.
+
+### Notes
+
+- Existing generated servers under `workbench/mcp_servers/` are **not**
+  rewritten. Re-exporting an old recording will produce CDP-based output;
+  pass `--execution-mode http` to reproduce the legacy shape.
+- `auth.strategy` is unchanged and remains the credential-source descriptor
+  (`tabby_credentials` / `static_secret_header`). Only execution mechanics
+  changed, not credential classification.
+
 ## [1.0.0] - 2026-04-17
 
 Initial open-source release.

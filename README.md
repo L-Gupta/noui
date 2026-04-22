@@ -42,9 +42,22 @@ Computer-use agents simulate humans:
 1.  Record a session (Chrome extension + voice)
 2.  Extract HAR traces + intent
 3.  Convert into Python API functions
-4.  Maintain authenticated sessions via Tabby
+4.  Execute tools from inside the authenticated Tabby browser session
 5.  Expose everything as an MCP endpoint
 6.  Agents call APIs instead of clicking UI
+
+### Execution
+
+Generated tools run from **inside** the authenticated Tabby browser, not from a
+Python HTTP client. Each operation opens a WebSocket to Tabby's CDP endpoint
+(`localhost:9222`), locates the tab for the target domain, and calls
+`fetch(url, {credentials: 'include'})` via `Runtime.evaluate`. The real browser's
+TLS fingerprint and cookies are used — no credential extraction, and no
+Akamai/Cloudflare false positives.
+
+The legacy Python-side path (`httpx` + `resolve_auth()`) is still available for
+server-to-server APIs that aren't reachable from the browser origin; opt in
+explicitly with `noui workflow export --execution-mode http`.
 
 ------------------------------------------------------------------------
 
@@ -219,9 +232,10 @@ Then run `/noui-setup` in Claude Code to configure the environment.
 |---|---|
 | `/noui-setup` | One-time setup: venv, deps, `.env`, Chrome extension, Tabby CLI reference |
 | `/noui-record-login` | Record a login flow and register it with Tabby |
-| `/noui-record-workflow` | Record a workflow and export it as a FastMCP server |
+| `/noui-record-workflow` | Record a workflow and export it as a FastMCP server or Claude Code Skill |
 | `/noui-generalize` | Rename raw API parameters to natural-language equivalents post-export |
 | `/noui-generate-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
+| `/noui-generate-skill` | List, install, and uninstall generated Claude Code Skills across agents |
 
 ------------------------------------------------------------------------
 

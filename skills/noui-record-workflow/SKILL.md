@@ -32,6 +32,60 @@ The default is `--as both`. The rest of this skill focuses on the MCP output (au
 
 ---
 
+## How Execution Works
+
+Generated operations run **inside Tabby's authenticated browser** by default.
+Each operation:
+
+1. Opens a WebSocket to Tabby's CDP endpoint at `localhost:9222`.
+2. Finds the tab whose URL matches the recorded domain (via `find_page`).
+3. Calls `cdp_fetch(ws_url, url, method=..., headers=..., body=...)`, which
+   runs `fetch(url, {credentials: 'include'})` via `Runtime.evaluate` — so the
+   real browser's cookies, TLS fingerprint, and origin are used.
+
+The two primitives live in the generated `noui_runtime/cdp.py` module:
+
+```python
+from noui_runtime.cdp import find_page, cdp_fetch
+```
+
+### Why this is the default
+
+- **No credential extraction.** The Python MCP process never handles cookies
+  or bearer tokens directly.
+- **Matches what a real user does.** Real browser fingerprint and cookies
+  eliminate the Akamai / Cloudflare / PerimeterX false positives that fire on
+  Python HTTP clients.
+- **Safer under session refresh.** Cookie rotation is handled by the browser;
+  the MCP never sees a stale cookie.
+
+### Runtime prerequisites
+
+- Tabby must be running with a live session for the app.
+- A page on the target domain must be open in that session. If not, the first
+  call raises a clear error naming `tabby session ensure --profile <slug>`.
+
+### Escape hatch — `--execution-mode http`
+
+Switch to the legacy Python-side path when CDP cannot work:
+
+```bash
+.venv/bin/python cli/main.py workflow export <session_id> --execution-mode http
+```
+
+Use `http` mode when:
+
+- The API is server-to-server and not reachable from the browser origin.
+- CORS blocks `credentials: 'include'` cross-origin (no
+  `Access-Control-Allow-Credentials: true`).
+- You are running the MCP on a host without a live Tabby.
+
+Under `--execution-mode http` the generator emits the classic
+`httpx.AsyncClient()` + `resolve_auth()` template. The same flag is available
+on `noui autopilot export`.
+
+---
+
 ## Mode Selection
 
 **Ask the user (or infer from context) before proceeding:**

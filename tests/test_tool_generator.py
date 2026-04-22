@@ -1,10 +1,12 @@
 """Regression tests for operation code generation via server_generator._render_operation.
 
-Critical invariants:
-- Authenticated operations must call resolve_auth() (not get_auth_headers(TABBY_PROFILE_ID)).
-- Recorded non-auth headers must be preserved and merged with auth headers.
-- Unauthenticated operations must not import or call resolve_auth().
-- No TABBY_PROFILE_ID constant should be embedded in generated operation code.
+Two sections:
+- Legacy HTTP-mode invariants (execution_mode='http'): auth strategy drives
+  resolve_auth() wiring, recorded headers merge with auth headers, unauth ops
+  skip the auth import, etc.
+- CDP-mode invariants (default): operations import from noui_runtime.cdp and
+  call cdp_fetch; recorded static headers are still embedded; no httpx or
+  resolve_auth appears.
 """
 
 from __future__ import annotations
@@ -17,6 +19,17 @@ if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
 from compiler.mcp.server_generator import _render_operation
+
+
+def _render_http(td: dict, *, auth_plan: dict) -> str:
+    """Shorthand: render an operation in legacy HTTP mode."""
+    return _render_operation(td, auth_plan=auth_plan, execution_mode="http")
+
+
+def _render_cdp(td: dict, *, auth_plan: dict) -> str:
+    """Shorthand: render an operation in CDP mode (default)."""
+    return _render_operation(td, auth_plan=auth_plan, execution_mode="cdp")
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -75,30 +88,32 @@ def _static_auth_plan(env_var: str = "ADOPT_BANK_API_KEY") -> dict:
 
 
 class TestAuthenticatedOperations:
+    """Legacy HTTP mode: resolve_auth wiring invariants."""
+
     def test_uses_resolve_auth_not_get_auth_headers(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan=_tabby_auth_plan())
+        src = _render_http(_simple_tool(), auth_plan=_tabby_auth_plan())
         assert "resolve_auth" in src, "Authenticated op must call resolve_auth()"
         assert "get_auth_headers" not in src, (
             "Authenticated op must not use legacy get_auth_headers(TABBY_PROFILE_ID)"
         )
 
     def test_imports_resolve_auth(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan=_tabby_auth_plan())
+        src = _render_http(_simple_tool(), auth_plan=_tabby_auth_plan())
         assert "from noui_runtime.auth import resolve_auth" in src
 
     def test_no_tabby_profile_id_constant(self) -> None:
         """TABBY_PROFILE_ID constant must not be embedded — it belongs in auth_plan.json."""
-        src = _render_operation(_simple_tool(), auth_plan=_tabby_auth_plan("my-slug"))
+        src = _render_http(_simple_tool(), auth_plan=_tabby_auth_plan("my-slug"))
         assert "TABBY_PROFILE_ID" not in src, (
             "Profile ID must not be baked into operation module; it lives in auth_plan.json"
         )
 
     def test_static_auth_also_uses_resolve_auth(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan=_static_auth_plan())
+        src = _render_http(_simple_tool(), auth_plan=_static_auth_plan())
         assert "resolve_auth" in src
 
     def test_headers_passed_to_httpx(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan=_tabby_auth_plan())
+        src = _render_http(_simple_tool(), auth_plan=_tabby_auth_plan())
         assert "headers=" in src, "auth headers must be passed to httpx call"
 
 
@@ -106,6 +121,8 @@ class TestAuthenticatedOperations:
 
 
 class TestHeaderMerging:
+    """Legacy HTTP mode: recorded+auth header merge invariants."""
+
     def test_recorded_headers_preserved_when_auth_present(self) -> None:
         """Non-auth recorded headers (Accept, Content-Type) must survive auth header injection."""
         tool = _simple_tool(
@@ -114,7 +131,7 @@ class TestHeaderMerging:
                 {"name": "X-Request-Version", "value": "2"},
             ]
         )
-        src = _render_operation(tool, auth_plan=_tabby_auth_plan())
+        src = _render_http(tool, auth_plan=_tabby_auth_plan())
         assert "'Accept'" in src or '"Accept"' in src, (
             "Recorded Accept header must appear in generated operation source"
         )
@@ -125,7 +142,7 @@ class TestHeaderMerging:
     def test_auth_overrides_recorded_via_merge(self) -> None:
         """Auth headers from resolve_auth() must take precedence over recorded placeholders."""
         tool = _simple_tool(request_headers=[{"name": "Accept", "value": "application/json"}])
-        src = _render_operation(tool, auth_plan=_tabby_auth_plan())
+        src = _render_http(tool, auth_plan=_tabby_auth_plan())
         assert "resolve_auth" in src
         assert "_recorded" in src or "{**" in src, (
             "Generated code must merge recorded headers with auth headers"
@@ -134,7 +151,7 @@ class TestHeaderMerging:
     def test_no_recorded_headers_no_merge_dict(self) -> None:
         """When there are no recorded non-auth headers, skip the _recorded merge dict."""
         tool = _simple_tool(request_headers=[])
-        src = _render_operation(tool, auth_plan=_tabby_auth_plan())
+        src = _render_http(tool, auth_plan=_tabby_auth_plan())
         assert "_recorded" not in src, (
             "When no recorded headers exist, the _recorded dict should be omitted"
         )
@@ -144,8 +161,10 @@ class TestHeaderMerging:
 
 
 class TestUnauthenticatedOperations:
+    """Legacy HTTP mode: unauth ops must skip the auth runtime entirely."""
+
     def test_no_auth_import_when_empty_plan(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan={})
+        src = _render_http(_simple_tool(), auth_plan={})
         assert "resolve_auth" not in src
         assert "get_auth_headers" not in src
         assert "noui_runtime" not in src
@@ -153,11 +172,11 @@ class TestUnauthenticatedOperations:
     def test_recorded_headers_still_included_without_auth(self) -> None:
         """Even without auth, recorded static headers should appear in generated code."""
         tool = _simple_tool(request_headers=[{"name": "Accept", "value": "application/json"}])
-        src = _render_operation(tool, auth_plan={})
+        src = _render_http(tool, auth_plan={})
         assert "'Accept'" in src or '"Accept"' in src
 
     def test_no_resolve_auth_when_no_auth_plan(self) -> None:
-        src = _render_operation(_simple_tool(request_headers=[]), auth_plan={})
+        src = _render_http(_simple_tool(request_headers=[]), auth_plan={})
         assert "resolve_auth" not in src
 
 
@@ -165,23 +184,81 @@ class TestUnauthenticatedOperations:
 
 
 class TestOperationStructure:
+    """Legacy HTTP mode: rendered Python structure."""
+
     def test_base_url_embedded(self) -> None:
-        src = _render_operation(
+        src = _render_http(
             _simple_tool(base_url="https://api.myapp.com"), auth_plan=_tabby_auth_plan()
         )
         assert "https://api.myapp.com" in src
 
     def test_path_in_url_expression(self) -> None:
-        src = _render_operation(
+        src = _render_http(
             _simple_tool(path="/v2/clients/{client_id}/documents"), auth_plan=_tabby_auth_plan()
         )
         assert "/v2/clients/{client_id}/documents" in src
 
     def test_async_execute_function(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan={})
+        src = _render_http(_simple_tool(), auth_plan={})
         assert "async def execute(" in src or "async def execute() -> dict:" in src
 
     def test_returns_json_or_text_fallback(self) -> None:
-        src = _render_operation(_simple_tool(), auth_plan={})
+        src = _render_http(_simple_tool(), auth_plan={})
         assert "resp.json()" in src
         assert "resp.status_code" in src
+
+
+# ── CDP (default) mode ───────────────────────────────────────────────────────
+
+
+class TestCdpModeRender:
+    """CDP-mode invariants for _render_operation (now the default)."""
+
+    def test_imports_cdp_runtime(self) -> None:
+        src = _render_cdp(_simple_tool(), auth_plan=_tabby_auth_plan())
+        assert "from noui_runtime.cdp import" in src
+        assert "cdp_fetch" in src
+        assert "find_page" in src
+
+    def test_no_httpx_or_resolve_auth(self) -> None:
+        src = _render_cdp(_simple_tool(), auth_plan=_tabby_auth_plan())
+        assert "import httpx" not in src
+        assert "resolve_auth" not in src
+
+    def test_cdp_host_match_embedded(self) -> None:
+        """CDP_HOST_MATCH must come from the base_url's netloc so find_page finds the page."""
+        src = _render_cdp(
+            _simple_tool(base_url="https://api.myapp.com"), auth_plan=_tabby_auth_plan()
+        )
+        assert "CDP_HOST_MATCH = 'api.myapp.com'" in src
+
+    def test_base_url_still_embedded(self) -> None:
+        src = _render_cdp(
+            _simple_tool(base_url="https://api.myapp.com"), auth_plan=_tabby_auth_plan()
+        )
+        assert "https://api.myapp.com" in src
+
+    def test_recorded_headers_preserved(self) -> None:
+        """Recorded static headers must still be passed to cdp_fetch."""
+        tool = _simple_tool(request_headers=[{"name": "Accept", "value": "application/json"}])
+        src = _render_cdp(tool, auth_plan={})
+        assert "'Accept'" in src or '"Accept"' in src
+        assert "'application/json'" in src or '"application/json"' in src
+
+    def test_raises_when_no_page_target(self) -> None:
+        src = _render_cdp(_simple_tool(), auth_plan=_tabby_auth_plan())
+        assert "No Tabby page matching" in src
+        assert "--execution-mode http" in src
+
+    def test_query_params_url_encoded(self) -> None:
+        tool = _simple_tool(
+            params=[{"name": "limit", "type": "int", "source": "query", "required": False}]
+        )
+        src = _render_cdp(tool, auth_plan={})
+        assert "urllib.parse.urlencode" in src
+
+    def test_unauth_still_generates_cdp(self) -> None:
+        """Even with no auth, CDP mode still generates in-browser execution."""
+        src = _render_cdp(_simple_tool(), auth_plan={})
+        assert "cdp_fetch" in src
+        assert "find_page" in src

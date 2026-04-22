@@ -30,8 +30,11 @@ from compiler.mcp.api_doc_generator import generate_api_markdown
 from compiler.mcp.auth_plan import generate_auth_plan
 from compiler.mcp.har_to_tools import har_to_tool_defs
 from compiler.runtime.auth_adapter import generate_auth_adapter
+from compiler.runtime.cdp_adapter import generate_cdp_adapter
 from compiler.skill.operation_generator import render_skill_operation
 from compiler.skill.skill_md_generator import render_skill_md
+
+_VALID_EXECUTION_MODES = ("cdp", "http")
 
 
 def compile_workflow_to_skill(
@@ -47,11 +50,20 @@ def compile_workflow_to_skill(
     profile_slug: str = "",
     profile_db_id: str = "",
     description_override: str = "",
+    execution_mode: str = "cdp",
 ) -> dict:
     """Compile a recorded workflow session into an installable Claude Code skill.
 
+    See `compile_workflow` in compiler.mcp.server_generator for `execution_mode`
+    semantics — the two compilers stay in lockstep.
+
     Returns the manifest dict (same content as manifest.json).
     """
+    if execution_mode not in _VALID_EXECUTION_MODES:
+        raise ValueError(
+            f"Invalid execution_mode {execution_mode!r}. Expected one of {_VALID_EXECUTION_MODES}."
+        )
+
     from backend.config import settings as _settings
 
     out_path = Path(output_dir)
@@ -110,6 +122,8 @@ def compile_workflow_to_skill(
     (runtime_dir / "auth.py").write_text(
         generate_auth_adapter(_settings.tabby_api_host), encoding="utf-8"
     )
+    if execution_mode == "cdp":
+        (runtime_dir / "cdp.py").write_text(generate_cdp_adapter(), encoding="utf-8")
 
     # 4. operations/*.py (skill-specific rendering with CLI wrapper)
     ops_dir = out_path / "operations"
@@ -119,7 +133,7 @@ def compile_workflow_to_skill(
     op_files: list[str] = []
     op_entries: list[dict] = []
     for td in tool_defs:
-        op_src = render_skill_operation(td, auth_plan=auth_plan)
+        op_src = render_skill_operation(td, auth_plan=auth_plan, execution_mode=execution_mode)
         op_file = ops_dir / f"{td['name']}.py"
         op_file.write_text(op_src, encoding="utf-8")
         op_files.append(f"operations/{td['name']}.py")
@@ -191,10 +205,16 @@ def compile_workflow_to_skill(
         "operations/__init__.py",
         *op_files,
     ]
+    if execution_mode == "cdp":
+        all_files.append("noui_runtime/cdp.py")
     if auth_plan:
         all_files.append("auth_plan.json")
 
     auth_strategy = auth_plan.get("strategy", "") if auth_plan else ""
+    resolved_auth_strategy = auth_strategy or ("tabby_credentials" if has_auth else None)
+    execution_strategy = (
+        "cdp_browser_session" if execution_mode == "cdp" else resolved_auth_strategy
+    )
 
     manifest: dict = {
         "schema_version": "1",
@@ -212,7 +232,8 @@ def compile_workflow_to_skill(
             "requires_auth": has_auth,
             "profile_slug": effective_slug or None,
             "profile_db_id": profile_db_id or None,
-            "strategy": auth_strategy or ("tabby_credentials" if has_auth else None),
+            "strategy": resolved_auth_strategy,
+            "execution_strategy": execution_strategy,
             "auth_plan_file": "auth_plan.json" if auth_plan else None,
         },
         "runtime": {
