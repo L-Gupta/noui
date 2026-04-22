@@ -383,12 +383,56 @@ When in doubt: if the value was the same every time during recording and doesn't
 
 ---
 
+## Dynamic-Header-Injection Sites (JS-injected auth)
+
+Some SPAs acquire a short-lived bearer token in-memory (fetch from `/auth/init` or similar on page load), then wrap `window.fetch` / `XMLHttpRequest` with an interceptor that sets `Authorization: Bearer <jwt>` right before every XHR. The cookie jar is **empty** of auth material, `localStorage` / `sessionStorage` don't hold the bearer either, yet every real API call carries it. Calling the API from `cdp_fetch` with `credentials: 'include'` alone will get you a 401 or 403.
+
+### Detect
+
+- HAR contains an `Authorization: Bearer eyJ...` header whose JWT `jti` (or `sub`, `exp`) rotates between recordings of the same flow.
+- `document.cookie` at runtime does **not** include the bearer substring.
+- `localStorage` and `sessionStorage` dumps don't contain the bearer either.
+- The recorded API host is on a different subdomain from `www.*` (e.g. `api-prod-*`, `api.*`).
+
+### Workaround — CDP Network-event sniffing
+
+Enable CDP's `Network` domain, reload the page, listen for `Network.requestWillBeSent`, and grab the `Authorization` off the first request that matches your target host. Cache in `/tmp` with a TTL, invalidate on 401/403, retry once.
+
+Reference implementation (10-line core):
+
+```python
+await ws.send({"id": 1, "method": "Network.enable"})
+await ws.send({"id": 2, "method": "Page.reload"})
+deadline = loop.time() + 20
+while loop.time() < deadline:
+    msg = json.loads(await ws.recv())
+    if msg.get("method") != "Network.requestWillBeSent":
+        continue
+    url = msg["params"]["request"].get("url", "")
+    if TARGET_HOST not in url:
+        continue
+    authz = {k.lower(): v for k, v in msg["params"]["request"].get("headers", {}).items()}.get("authorization", "")
+    if authz.startswith("eyJ"):
+        return authz
+```
+
+See `.claude/skills/indigo-flight-search/noui_runtime/indigo_auth.py` for the full cache + retry wrapper around this core. The IndiGo skill is the canonical example of this pattern in this repo.
+
+> **Forward pointer:** When the retro-C1 generic `sniff_headers()` helper lands in `noui_runtime`, delete the hand-written module and replace the import. See `plans/noui/noui-agent-friction-retro-plan.md` Section C1.
+
+### Per-host static client IDs
+
+Sites of this shape often pair the dynamic JWT with a stable `user_key` / `x-api-key` / `x-client-id` header that is **per-host but constant across sessions** (look for the same value across every request to that host in the HAR). Hardcode those — they're infrastructure, not user input.
+
+---
+
 ## Known Anti-Bot Sites
 
 | Site | Bot Detection | CloakBrowser Login | Workaround |
 |---|---|---|---|
 | Expedia | Akamai Bot Manager | Form blocked silently; reaches homepage but can't submit | HITL login + CDP fetch + DOM scrape |
-| (add more as discovered) | | | |
+| Generic SPA with JS-injected auth | Token not in cookies/localStorage; `Authorization` is set by a fetch interceptor in the page's JS bundle | n/a (site may be anonymous) | Sniff the `Authorization` via CDP `Network.requestWillBeSent` on page reload; cache per session. See *Dynamic-Header-Injection Sites* above. |
+| IndiGo (`api-prod-*-skyplus6e.goindigo.in`) | Anonymous session; per-host `user_key` + rotating JWT; Akamai cookies | n/a | Hardcode per-host `user_key`s; sniff JWT at runtime. Reference: `indigo-flight-search` skill. |
 
 ---
 
@@ -431,6 +475,10 @@ Start
   │
   ├─ Login didn't actually work?
   │     └─ Phase 1: Fix D (HITL login)
+  │
+  ├─ 401/403 on default CDP server, cookies appear correct?
+  │     └─ Check HAR: is `Authorization` present and does its JWT `jti` rotate across recordings?
+  │         └─ Yes → Dynamic-header-injection pattern; see *Dynamic-Header-Injection Sites* section
   │
   Phase 2: Read tools.json + operations + ask user about workflow
   │
