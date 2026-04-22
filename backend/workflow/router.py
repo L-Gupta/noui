@@ -371,6 +371,7 @@ async def export_workflow(
                 profile_db_id=profile_db_id,
                 description_override=description_override,
                 execution_mode=execution_mode,
+                start_url=session.start_url or "",
             )
         except Exception as exc:
             logger.exception("Skill compilation failed for session %s", session_id)

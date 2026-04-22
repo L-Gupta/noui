@@ -51,6 +51,7 @@ def compile_workflow_to_skill(
     profile_db_id: str = "",
     description_override: str = "",
     execution_mode: str = "cdp",
+    start_url: str = "",
 ) -> dict:
     """Compile a recorded workflow session into an installable Claude Code skill.
 
@@ -80,6 +81,19 @@ def compile_workflow_to_skill(
         workflow_name=session_name,
         tabby_profile_id=effective_slug,
     )
+
+    # Record the workflow's start URL in the manifest so downstream tooling
+    # (e.g. `noui tabby session ensure --skill <id>`) can navigate the browser
+    # to the right page without the user specifying it again. Prefer the
+    # explicit value passed by the caller (the workflow session's stored
+    # `start_url`); fall back to the first HTTP entry in the HAR for callers
+    # that don't have one handy.
+    if not start_url:
+        for entry in har.get("log", {}).get("entries", []) or []:
+            url = (entry.get("request", {}) or {}).get("url", "")
+            if url.startswith("http://") or url.startswith("https://"):
+                start_url = url.split("?")[0]
+                break
 
     # 2. Auth plan (shared)
     auth_headers_seen: list[str] = []
@@ -138,10 +152,10 @@ def compile_workflow_to_skill(
         f'requires-python = ">=3.11"\n'
         f"dependencies = [\n"
         + "".join(f"    {d},\n" for d in pyproject_deps)
-        + f"]\n"
-        f"\n"
-        f"[tool.uv]\n"
-        f"package = false\n"
+        + "]\n"
+        "\n"
+        "[tool.uv]\n"
+        "package = false\n"
     )
     (out_path / "pyproject.toml").write_text(pyproject_toml, encoding="utf-8")
     (out_path / ".python-version").write_text("3.11\n", encoding="utf-8")
@@ -251,6 +265,7 @@ def compile_workflow_to_skill(
             "id": skill_id,
             "name": session_name,
             "workflow_session_id": session_id,
+            "start_url": start_url,
         },
         "auth": {
             "requires_auth": has_auth,

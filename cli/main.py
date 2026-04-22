@@ -58,6 +58,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -175,6 +176,298 @@ def _cdp_is_reachable(host: str = "localhost", port: int = 9222, timeout: float 
             return True
     except OSError:
         return False
+
+
+def _tabby_worker_build_state() -> tuple[str, str]:
+    """Report the freshness of the Tabby worker's compiled output.
+
+    Returns a tuple ``(state, detail)`` where ``state`` is one of:
+        - ``"ok"``   — `dist/main.js` exists and is newer than every .ts file under src/.
+        - ``"missing"`` — the worker has never been built (no dist/main.js).
+        - ``"stale"`` — a source file is newer than the compiled output.
+        - ``"no-worker"`` — the worker directory itself doesn't exist (e.g. fresh
+          checkout without submodule init); this is not the normal build-state
+          concern and callers should surface it differently.
+
+    ``detail`` is a short human-readable explanation (what file is missing,
+    which .ts triggered the stale signal, etc.) suitable for printing next to
+    the state label.
+
+    Used by `noui status`, `noui tabby setup`, and `noui tabby session ensure`
+    to fail fast instead of letting the worker crash-loop and reporting only
+    "Session did not pass health check within 5 minutes" after waiting.
+    """
+    worker_dir = TABBY_DIR / "apps" / "worker"
+    if not worker_dir.exists():
+        return ("no-worker", f"worker directory not found: {worker_dir}")
+
+    main_js = worker_dir / "dist" / "main.js"
+    if not main_js.exists():
+        return ("missing", f"{main_js} not found — worker has never been built")
+
+    src_dir = worker_dir / "src"
+    if not src_dir.exists():
+        # Build output exists but source dir is missing; treat as ok (we can't prove staleness).
+        return ("ok", f"{main_js} present (no src/ to compare)")
+
+    main_js_mtime = main_js.stat().st_mtime
+    newest_src = main_js_mtime
+    newest_path = ""
+    for ts_file in src_dir.rglob("*.ts"):
+        try:
+            mtime = ts_file.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest_src:
+            newest_src = mtime
+            newest_path = str(ts_file.relative_to(worker_dir))
+
+    if newest_src > main_js_mtime:
+        return ("stale", f"{newest_path} is newer than dist/main.js")
+    return ("ok", f"{main_js.relative_to(TABBY_DIR)} up to date")
+
+
+def _tabby_worker_build_hint() -> str:
+    """Return the exact shell command to fix a missing/stale worker build."""
+    return f"pnpm install && pnpm nx build worker  # run inside {TABBY_DIR}"
+
+
+# Patterns that indicate a worker cannot possibly become HEALTHY — short-circuit
+# the 5-minute health-check wait and surface the failure.
+_WORKER_FATAL_PATTERNS = (
+    "MODULE_NOT_FOUND",
+    "Cannot find module",
+    "ERR_REQUIRE_ESM",
+    "SyntaxError:",
+    "ReferenceError:",
+    "TypeError:",
+    "UnhandledPromiseRejection",
+    "address already in use",
+    "EADDRINUSE",
+    "ECONNREFUSED",  # worker's own deps (redis/postgres) unreachable
+    "Error: connect ECONNREFUSED",
+)
+
+# Patterns that indicate forward progress — surface verbatim to the user so they
+# see the worker actually booting instead of watching progress dots.
+_WORKER_PROGRESS_PATTERNS = (
+    "listening on",
+    "Nest application successfully started",
+    "Worker ready",
+    "Health check passed",
+    "Starting browser",
+    "CloakBrowser",
+)
+
+
+def _navigate_cdp_page(url: str, *, timeout: float = 15.0) -> tuple[bool, str]:
+    """Navigate the Tabby-managed Chrome tab to ``url`` via CDP.
+
+    Finds the first page target at localhost:9222/json, sends Page.navigate,
+    and waits briefly for the URL to settle. Returns ``(ok, detail)``.
+
+    Used by `tabby session ensure --open ...` and `--skill ...` so users
+    don't have to hand-write a Page.navigate call for every anonymous-session
+    site whose cookies are provisioned on page load.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://localhost:9222/json", timeout=5) as resp:
+            targets = _json.load(resp)
+    except (OSError, urllib.error.URLError) as exc:
+        return (False, f"CDP endpoint unreachable at localhost:9222 ({exc})")
+
+    page_target = next((t for t in targets if t.get("type") == "page"), None)
+    if not page_target:
+        return (False, "no page target found at localhost:9222/json")
+    target_id = page_target.get("id", "")
+    if not target_id:
+        return (False, "page target has no id")
+
+    # Send Page.navigate over the HTTP-to-WS bridge. Using websockets keeps the
+    # dependency surface the same as noui_runtime/cdp.py (already vendored).
+    try:
+        import websockets  # type: ignore  # noqa: F401
+    except ImportError:
+        return (False, "websockets package not available in the CLI venv")
+
+    async def _navigate() -> tuple[bool, str]:
+        import websockets as _ws  # type: ignore
+
+        ws_url = page_target.get("webSocketDebuggerUrl") or ""
+        if not ws_url:
+            return (False, "no webSocketDebuggerUrl on page target")
+        try:
+            async with _ws.connect(ws_url, max_size=10_000_000) as ws:
+                await ws.send(
+                    _json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}})
+                )
+                await asyncio.wait_for(ws.recv(), timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            return (False, f"CDP navigate failed: {exc}")
+        return (True, f"navigated to {url}")
+
+    import asyncio
+
+    try:
+        return asyncio.run(asyncio.wait_for(_navigate(), timeout=timeout))
+    except TimeoutError:
+        return (False, f"navigation timed out after {timeout}s")
+
+
+def _skill_manifest_start_url(skill_id: str) -> tuple[str, str]:
+    """Look up `workflow.start_url` in a generated skill's manifest.
+
+    Checks `workbench/skills/<id>/manifest.json` first. For skills generated
+    before B4 landed (manifest lacks start_url), falls back to the noui
+    backend's workflow-sessions endpoint using the recorded session_id.
+    Returns ``(url, source)`` where ``source`` is ``"manifest"``, ``"backend"``,
+    or ``""`` on miss.
+    """
+    manifest_path = _find_skill_manifest(skill_id)
+    if not (manifest_path and manifest_path.exists()):
+        return ("", "")
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception:
+        return ("", "")
+
+    workflow = manifest.get("workflow") or {}
+    url = workflow.get("start_url") or ""
+    if url:
+        return (url, "manifest")
+
+    session_id = workflow.get("workflow_session_id", "")
+    if not session_id:
+        return ("", "")
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"{BACKEND_URL}/workflow-sessions/{session_id}", timeout=5
+        ) as r:
+            data = json.loads(r.read().decode())
+        url = data.get("start_url", "")
+        if url:
+            return (url, "backend")
+    except Exception:
+        pass
+    return ("", "")
+
+
+def _print_worker_log_tail(log_path: Path, start_offset: int, *, n: int = 30) -> None:
+    """Print the last ``n`` non-blank lines of the worker log to stderr.
+
+    ``start_offset`` scopes the tail to lines written since the current
+    `session ensure` invocation began, so we don't leak noise from previous
+    crashes. Falls back to the whole-file tail when the bounded read is
+    empty (e.g. the worker died before writing anything new).
+    """
+    try:
+        if log_path.exists():
+            size = log_path.stat().st_size
+            if size > start_offset:
+                with log_path.open("rb") as fh:
+                    fh.seek(start_offset)
+                    chunk = fh.read().decode("utf-8", errors="replace")
+                lines = [ln.rstrip() for ln in chunk.splitlines() if ln.strip()][-n:]
+                if lines:
+                    print(f"  Worker logs: {log_path}", file=sys.stderr)
+                    print(f"  Last {len(lines)} lines since this ensure started:", file=sys.stderr)
+                    for line in lines:
+                        print(f"    {line}", file=sys.stderr)
+                    return
+        # Fallback: whole-file tail (covers the case where the offset logic
+        # can't find anything new, e.g. file truncated).
+        lines = _tail_file_lines(log_path, n)
+        if lines:
+            print(f"  Worker logs: {log_path}", file=sys.stderr)
+            print(f"  Last {len(lines)} lines:", file=sys.stderr)
+            for line in lines:
+                print(f"    {line}", file=sys.stderr)
+        else:
+            print(f"  Worker logs: {log_path} (empty)", file=sys.stderr)
+    except Exception as exc:
+        # Never let log-tail failures mask the real error.
+        print(f"  (could not read worker log tail: {exc})", file=sys.stderr)
+
+
+def _tail_file_lines(path: Path, n: int) -> list[str]:
+    """Return the last ``n`` non-blank lines of ``path``, oldest first.
+
+    Robust against missing files and decode errors. Used by session-ensure's
+    timeout branch and by the log-streaming tailer for retrospective context.
+    """
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return lines[-n:]
+
+
+def _spawn_worker_log_tailer(
+    log_path: Path, fatal_event: threading.Event, start_offset: int
+) -> threading.Thread:
+    """Start a daemon thread that tails ``log_path`` from byte ``start_offset``.
+
+    Echoes progress lines directly; on a fatal pattern match, prints the line
+    and sets ``fatal_event`` so the main poll loop can exit early instead of
+    waiting for the full 5-minute health-check timeout.
+
+    The tailer is a best-effort aid: it runs until the event is set or the
+    process exits. It does not guarantee delivery of every line (file reads
+    are bounded to 64 KiB per tick) and does not block the main loop.
+    """
+
+    def _run() -> None:
+        offset = start_offset
+        while not fatal_event.is_set():
+            try:
+                if not log_path.exists():
+                    time.sleep(0.5)
+                    continue
+                size = log_path.stat().st_size
+                if size < offset:
+                    # File was truncated / rotated; reset.
+                    offset = 0
+                if size <= offset:
+                    time.sleep(0.5)
+                    continue
+                with log_path.open("rb") as fh:
+                    fh.seek(offset)
+                    chunk = fh.read(min(size - offset, 65536))
+                offset += len(chunk)
+                try:
+                    text = chunk.decode("utf-8", errors="replace")
+                except Exception:
+                    continue
+                for raw_line in text.splitlines():
+                    line = raw_line.rstrip()
+                    if not line:
+                        continue
+                    if any(pat in line for pat in _WORKER_FATAL_PATTERNS):
+                        # Newline to break out of the "progress dots" row, then the line.
+                        print()
+                        print(_red(f"  [worker] {line[:400]}"))
+                        fatal_event.set()
+                        return
+                    if any(pat in line for pat in _WORKER_PROGRESS_PATTERNS):
+                        print()
+                        print(_cyan(f"  [worker] {line[:200]}"))
+            except Exception:
+                # Never let the tailer itself take down the command.
+                time.sleep(1)
+
+    thread = threading.Thread(target=_run, name="tabby-worker-log-tailer", daemon=True)
+    thread.start()
+    return thread
 
 
 def _mark_session_terminated(session_id: str) -> None:
@@ -3519,12 +3812,27 @@ def cmd_tabby_status(args: argparse.Namespace) -> int:  # noqa: ARG001
     else:
         print(_yellow("  (could not reach Docker Compose — is Docker running?)"))
     print()
+
+    print(_bold("Tabby worker build:"))
+    build_state, detail = _tabby_worker_build_state()
+    if build_state == "ok":
+        print(_green(f"  ✓  {detail}"))
+    elif build_state == "missing":
+        print(_red(f"  ✗  {detail}"))
+        print(f"     Fix: {_bold(_tabby_worker_build_hint())}")
+    elif build_state == "stale":
+        print(_yellow(f"  !  {detail}"))
+        print(f"     Rebuild: {_bold(_tabby_worker_build_hint())}")
+    else:
+        print(_yellow(f"  !  {detail}"))
+    print()
+
     print(_bold("Tabby API:"))
     if _tabby_alive():
         pid = _read_pid(TABBY_PID_FILE)
         pid_label = f" (PID {pid})" if pid else ""
         print(_green(f"  ✓  API ready at {TABBY_API_HOST}{pid_label}"))
-        return 0
+        return 0 if build_state == "ok" else 1
     else:
         print(_red(f"  ✗  API not reachable at {TABBY_API_HOST}"))
         print(f"     Run: {_bold('noui tabby start')}")
@@ -3657,6 +3965,18 @@ def cmd_tabby_stop(args: argparse.Namespace) -> int:
 
 def cmd_tabby_setup(args: argparse.Namespace) -> int:
     """Full end-to-end Tabby provisioning for NoUI."""
+    build_state, detail = _tabby_worker_build_state()
+    if build_state in ("missing", "stale"):
+        print(_red(f"Tabby worker is not ready: {detail}"))
+        print(f"  Run this first: {_bold(_tabby_worker_build_hint())}")
+        print("  Then retry `noui tabby setup`. We refuse to proceed because the worker")
+        print("  would crash on every `tabby session ensure`, failing silently after a 5-minute wait.")
+        return 1
+    if build_state == "no-worker":
+        print(_red(f"Tabby source tree missing: {detail}"))
+        print("  Did the submodule init? Try: `git submodule update --init --recursive`.")
+        return 1
+
     if not _tabby_alive():
         print("Tabby API is not running — starting it first …")
         print()
@@ -3881,6 +4201,18 @@ def cmd_session_status(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def cmd_session_ensure(args: argparse.Namespace) -> int:
+    build_state, detail = _tabby_worker_build_state()
+    if build_state in ("missing", "stale"):
+        print(_red(f"Tabby worker is not ready: {detail}"))
+        print(f"  Run: {_bold(_tabby_worker_build_hint())}")
+        print("  `tabby session ensure` would otherwise hang up to 5 minutes waiting for a")
+        print("  worker that never successfully starts. Fix the build first.")
+        return 1
+    if build_state == "no-worker":
+        print(_red(f"Tabby source tree missing: {detail}"))
+        print("  Run: `git submodule update --init --recursive`")
+        return 1
+
     if not _tabby_alive():
         print(_red(f"Tabby API is not running. Run: {_bold('noui tabby start')}"))
         return 1
@@ -3932,6 +4264,8 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         pid = _read_pid(TABBY_WORKER_PID_FILE)
         if pid and _pid_running(pid) and _cdp_is_reachable():
             print(_green(f"✓ Session for '{profile_id}' is already HEALTHY"))
+            # Still honor --open / --skill against the existing session.
+            _maybe_navigate_from_args(args)
             return 0
         # Worker has died but DB still shows HEALTHY — clear the stale state
         _mark_session_terminated(healthy[0]["id"])
@@ -3996,6 +4330,11 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         pass
 
     TABBY_WORKER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # Record the log's current size so the tailer only shows lines from this
+    # worker invocation, not stale lines from a previous crash.
+    log_start_offset = (
+        TABBY_WORKER_LOG_FILE.stat().st_size if TABBY_WORKER_LOG_FILE.exists() else 0
+    )
     worker_log_fh = open(TABBY_WORKER_LOG_FILE, "a")  # noqa: SIM115
     proc = subprocess.Popen(
         ["pnpm", "--filter", "@browser-hitl/worker", "start"],
@@ -4007,14 +4346,32 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     )
     TABBY_WORKER_PID_FILE.write_text(str(proc.pid))
     print(f"  Worker started (PID {proc.pid}) — logs → {_cyan(str(TABBY_WORKER_LOG_FILE))}")
+
+    # B2: stream the log alongside the health-check poll. A fatal pattern in
+    # the tailer sets this event so we exit early instead of waiting 5 minutes.
+    fatal_event = threading.Event()
+    _spawn_worker_log_tailer(TABBY_WORKER_LOG_FILE, fatal_event, log_start_offset)
+
     print()
     print("  Waiting for health check to pass", end="", flush=True)
 
     final_state = ""
     final_health = ""
+    timed_out = False
     for _ in range(60):
         time.sleep(5)
+        if fatal_event.is_set():
+            # The tailer already printed the offending line.
+            print(_red("  Worker emitted a fatal log line — aborting health-check wait."))
+            print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+            return 1
         print(".", end="", flush=True)
+        # Worker process died entirely? No point waiting further.
+        if proc.poll() is not None:
+            print()
+            print(_red(f"Worker process exited with code {proc.returncode} before becoming HEALTHY."))
+            _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
+            return 1
         try:
             resp = _tabby_http("GET", f"/sessions/{session_id}", token=admin_token)
             assert isinstance(resp, dict)
@@ -4025,15 +4382,21 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             if final_state in ("FAILED", "TERMINATED") or final_health == "AUTH_FAIL":
                 print()
                 print(_red(f"Session failed (state={final_state}, health={final_health})."))
-                print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+                _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
                 return 1
         except (RuntimeError, AssertionError):
             pass
     else:
+        timed_out = True
+
+    if timed_out:
         print()
         print(_red("Session did not pass health check within 5 minutes."))
-        print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+        _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
         return 1
+
+    # Signal the tailer to stop — we're past the health-check gate.
+    fatal_event.set()
 
     print()
 
@@ -4067,11 +4430,52 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             return 1
 
     print(_green(f"✓ Session for '{profile_id}' is HEALTHY"))
+
+    _maybe_navigate_from_args(args)
+
     print()
     print("  You can now record a workflow with Tabby auth:")
     _cmd = 'noui workflow record "My Workflow" <url>'
     print(f"    {_bold(_cmd)}")
     return 0
+
+
+def _maybe_navigate_from_args(args: argparse.Namespace) -> None:
+    """If --open or --skill was passed, navigate the CDP tab to the target URL.
+
+    Silent no-op when neither is passed. On failure, prints a warning but does
+    not fail the command — the session is HEALTHY regardless; users can
+    navigate manually via the CDP relay at localhost:9222 if this best-effort
+    navigation doesn't work.
+    """
+    target_url: str = getattr(args, "open_url", None) or ""
+    skill_arg: str = getattr(args, "open_skill", None) or ""
+    if skill_arg and not target_url:
+        target_url, source = _skill_manifest_start_url(skill_arg)
+        if not target_url:
+            print(
+                _yellow(
+                    f"  Skill '{skill_arg}' has no start_url — pass --open URL directly. "
+                    "Skills generated before B4 won't carry start_url in manifest; "
+                    "re-export to populate it."
+                )
+            )
+            return
+        print(f"  Resolved --skill {skill_arg} start_url from {source}: {target_url}")
+    if not target_url:
+        return
+    print(f"  Navigating browser to {_cyan(target_url)} …", end=" ", flush=True)
+    ok, detail = _navigate_cdp_page(target_url)
+    if ok:
+        print(_green("✓"))
+    else:
+        print(_yellow("⚠"))
+        print(
+            _yellow(
+                f"  Navigation failed ({detail}). Session is still HEALTHY; you can "
+                "navigate manually via the CDP relay at localhost:9222."
+            )
+        )
 
 
 def cmd_session_stop(args: argparse.Namespace) -> int:  # noqa: ARG001
@@ -4456,6 +4860,26 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PROFILE_ID",
         default=None,
         help="Profile to ensure (default: the only configured profile)",
+    )
+    ensure_p.add_argument(
+        "--open",
+        dest="open_url",
+        metavar="URL",
+        default=None,
+        help=(
+            "After the session is HEALTHY, navigate the browser tab to URL so the site's "
+            "session cookies provision before any subsequent tool call"
+        ),
+    )
+    ensure_p.add_argument(
+        "--skill",
+        dest="open_skill",
+        metavar="SKILL_ID",
+        default=None,
+        help=(
+            "Shortcut: pull the start URL from a generated skill's manifest "
+            "(workflow.start_url) instead of passing --open directly"
+        ),
     )
 
     stop_sess_p = tabby_session_sub.add_parser("stop", help="Stop the locally-running worker")
