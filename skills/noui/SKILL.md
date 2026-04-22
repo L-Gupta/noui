@@ -41,7 +41,6 @@ This skill is instruction-only — it runs no code itself. Following its install
   - **Tabby** — a locally-running Docker Compose service (bundled as a git submodule) that hosts persistent browser sessions and exposes a CDP endpoint on `localhost:9222`. Tabby is local; it is not a hosted NoUI service.
   - Generated FastMCP servers, which bind local ports so agents can connect to them.
 - **Access your local browser session** during recording and tool execution. You log into the target site once inside the local Tabby Chromium container; cookies, tokens, and TLS fingerprint stay there. Generated Python uses CDP `Runtime.evaluate` to call `fetch()` *inside* the authenticated browser — NoUI-generated code does not read, upload, or persist your credentials.
-- **Require `ANTHROPIC_API_KEY`** in `.env` (the compiler calls Claude to name and clean up extracted APIs). Optional `TABBY_*` variables are used only when provisioning Tabby for authenticated flows.
 - **Write artifacts to `workbench/`** inside the cloned repo: `login_recordings/`, `mcp_servers/<app>/<server_id>/`, and `skills/<app>/<skill_id>/`. Nothing is uploaded to `adoptai.ai` or any third-party service.
 
 ### Before installing in an environment with sensitive accounts
