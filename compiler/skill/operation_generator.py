@@ -16,13 +16,134 @@ payloads: exits 2 (still prints the JSON). On success: exits 0.
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
 
-def render_skill_operation(td: dict, *, auth_plan: dict) -> str:
+
+def render_skill_operation(td: dict, *, auth_plan: dict, execution_mode: str = "cdp") -> str:
     """Render the full Python source for a single Skill operation.
 
     The rendered file is standalone-runnable: `python operations/<name>.py`
     works from inside the Skill directory, with `noui_runtime/` one level up.
+
+    `execution_mode` matches the MCP compiler:
+      - "cdp" (default): execute inside Tabby's browser via CDP
+      - "http" (legacy): execute via httpx + resolve_auth()
     """
+    if execution_mode == "cdp":
+        return _render_skill_operation_cdp(td)
+    return _render_skill_operation_http(td, auth_plan=auth_plan)
+
+
+def _render_skill_operation_cdp(td: dict) -> str:
+    """Render a skill op that executes inside Tabby's browser via CDP."""
+    name = td["name"]
+    method = td["method"].upper()
+    path_template = td["path"]
+    base_url = td.get("base_url", "")
+    content_type = td.get("request_content_type", "")
+    params: list[dict] = td.get("params", [])
+    request_headers: list[dict] = td.get("request_headers", [])
+    description = td.get("description", "")
+
+    netloc = urlparse(base_url).netloc if base_url else ""
+
+    static_headers = {
+        h["name"]: h["value"] for h in request_headers if h.get("name") and h.get("value")
+    }
+
+    body_params = [p for p in params if p.get("source") in ("body", None, "")]
+    query_params = [p for p in params if p.get("source") == "query"]
+    has_body = bool(body_params) and method in ("POST", "PUT", "PATCH")
+
+    sig_parts = _py_signature(params)
+    desc_safe = description.replace('"""', "'''")
+
+    lines: list[str] = [
+        "#!/usr/bin/env python3",
+        f'"""Auto-generated skill operation: {name}',
+        f"Method: {method}",
+        f"Path: {path_template}",
+        "",
+        "Skill-variant entry point. Executes inside Tabby's authenticated browser",
+        f"via CDP. Requires a live Tabby session with a page open on {netloc or 'the target domain'}.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import asyncio",
+        "import json",
+        "import sys",
+        "from pathlib import Path",
+        "",
+    ]
+    if query_params:
+        lines.append("import urllib.parse")
+    lines += [
+        "",
+        "# Make noui_runtime importable when this file is run as a standalone script",
+        "_SKILL_ROOT = Path(__file__).resolve().parent.parent",
+        "if str(_SKILL_ROOT) not in sys.path:",
+        "    sys.path.insert(0, str(_SKILL_ROOT))",
+        "",
+        "from noui_runtime.cdp import cdp_fetch, find_page  # noqa: E402",
+        "",
+        f"BASE_URL = {base_url!r}",
+        f"CDP_HOST_MATCH = {netloc!r}",
+        "",
+        "",
+    ]
+
+    if sig_parts:
+        _sep = ",\n    "
+        lines.append(f"async def execute(\n    {_sep.join(sig_parts)},\n) -> dict:")
+    else:
+        lines.append("async def execute() -> dict:")
+    lines.append(f'    """{desc_safe}"""')
+
+    url_expr = f'f"{base_url}{_path_to_fstring(path_template)}"'
+    lines.append(f"    url = {url_expr}")
+
+    if query_params:
+        q_dict = ", ".join(f"{p['name']!r}: {p['name']}" for p in query_params)
+        lines.append(f"    _query = {{{q_dict}}}")
+        lines.append("    url = url + ('?' + urllib.parse.urlencode(_query) if _query else '')")
+
+    if has_body:
+        body_dict = ", ".join(f"{p['name']!r}: {p['name']}" for p in body_params)
+        # Content type influences Content-Type header only; body is JSON-encoded
+        # by cdp_fetch regardless.
+        _ = content_type
+        lines.append(f"    body = {{{body_dict}}}")
+
+    if static_headers:
+        lines.append(f"    headers = {static_headers!r}")
+    else:
+        lines.append("    headers: dict[str, str] = {}")
+
+    lines.append("    ws_url = await find_page(CDP_HOST_MATCH)")
+    lines.append("    if not ws_url:")
+    lines.append(
+        "        raise RuntimeError("
+        'f"No Tabby page matching {CDP_HOST_MATCH!r}. '
+        "Open the site in Tabby (run `tabby session ensure --profile <slug>`) "
+        'or re-export with --execution-mode http.")'
+    )
+
+    call_kwargs: list[str] = ["ws_url", "url", f'method="{method}"', "headers=headers"]
+    if has_body:
+        call_kwargs.append("body=body")
+    lines.append(f"    return await cdp_fetch({', '.join(call_kwargs)})")
+    lines.append("")
+    lines.append("")
+
+    lines += _render_cli_wrapper(name, description, params)
+
+    return "\n".join(lines)
+
+
+def _render_skill_operation_http(td: dict, *, auth_plan: dict) -> str:
+    """Render a skill op using httpx + resolve_auth (legacy mode)."""
     name = td["name"]
     method = td["method"].lower()
     path_template = td["path"]

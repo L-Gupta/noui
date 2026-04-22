@@ -11,6 +11,8 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 
 **Prerequisite:** `/noui-setup` must be complete. Chrome must be open with the NoUI extension loaded and connected to `localhost:8002`.
 
+**Execution mode:** autopilot-exported servers inherit the CDP default — generated operations run inside Tabby's browser session via `noui_runtime.cdp`. Pass `--execution-mode http` to `noui autopilot export` if you need the legacy `httpx + resolve_auth` path. See `/noui-record-workflow` → *How Execution Works*.
+
 ---
 
 ## Critical Rules (Never Violate)

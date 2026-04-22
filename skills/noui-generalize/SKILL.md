@@ -7,7 +7,7 @@ description: Use this skill when the user wants to generalize a recorded MCP wor
 
 Take a generated FastMCP server (or Skill) and make it **work** and **usable**:
 
-1. **Execution strategy** — if the site has bot detection (Akamai, Cloudflare), rewrite operations to execute API calls from inside the Tabby browser via CDP instead of Python `httpx`.
+1. **Execution strategy** — generated servers execute inside the Tabby browser via CDP by default (see `/noui-record-workflow` → *How Execution Works*). This skill handles the edge cases: SPA content that needs navigation + DOM scraping, sites requiring HITL login, profiles that need credential-type fixes, or rare cases where the `--execution-mode http` fallback is the right call.
 2. **Interface cleanup** — replace raw internal API parameters (`f_sid`, `bl`, `reqid`) with natural-language names (`origin`, `destination`, `departure_date`) so Claude Code can invoke tools without domain knowledge.
 
 **Prerequisite:** `/noui-record-workflow` must be complete and the MCP server must exist under `workbench/mcp_servers/`. For authenticated sites, `/noui-record-login` must also be complete with a running Tabby session.
@@ -30,12 +30,12 @@ After generalizing a skill, use `/noui-generate-skill` (not `/noui-generate-mcp`
 ## Critical Rules (Never Violate)
 
 - **NEVER** rewrite all tools at once — propose the new name and parameter list for each tool and get user approval before editing any files
-- **ALWAYS** preserve existing HTTP mechanics (URL, method, headers, auth pattern) unless switching to CDP — only the Python function interface changes
+- **ALWAYS** preserve existing execution mechanics (URL, method, headers, CDP vs. httpx) unless deliberately switching modes — only the Python function interface changes
 - **ALWAYS** hardcode values that were static in the recording (session routing params, build labels, `bl`, `f_sid`, `reqid`, `soc_app`, etc.) — do not expose infrastructure params to the caller
 - **NEVER** ask questions that can be answered by reading the code or URL
-- **NEVER** use `httpx`, `curl`, or any Python HTTP client to call Akamai-protected APIs — these get 429'd regardless of cookies. Use the CDP `Runtime.evaluate` + `fetch()` pattern instead.
+- `httpx` only appears in generated operations when `--execution-mode http` was used explicitly. Default generated operations use `noui_runtime.cdp.cdp_fetch`. If you see `httpx` in a default-mode server, something is wrong.
 - **ALWAYS** connect to the direct CDP port (`localhost:9222`) for `Runtime.evaluate` — the Tabby relay (`localhost:9223`) only allows screencast and input events.
-- **ALWAYS** use `credentials: 'include'` in browser-side `fetch()` calls — without it, cookies are not sent.
+- **ALWAYS** use `credentials: 'include'` in browser-side `fetch()` calls — the generated `cdp_fetch` helper already does this; preserve it when hand-editing.
 - **NEVER** assume "Login successful" in worker logs means login actually worked — CloakBrowser reports success when the DSL finishes, not when auth cookies appear. Always verify by checking cookies.
 - After rewriting, always remind the user to restart Claude Code to reload the updated tools
 
@@ -70,10 +70,13 @@ asyncio.run(test())
 | Result | Diagnosis | Next step |
 |---|---|---|
 | 200 with real data | Tool works — skip to Phase 2 (interface cleanup) |
-| 429 / "Too Many Requests" | Bot detection (Akamai/Cloudflare) blocking Python HTTP client | Phase 1 |
-| Empty credentials / `name: ""` | Tabby credential_types format bug | Phase 1, Fix A |
-| `No active profile found` | Profile still STAGING | Phase 1, Fix B |
-| Connection refused on 9222 | No Tabby browser session running | `tabby session ensure --profile <id>` |
+| `No Tabby page matching '<domain>'` | No tab open on the target site | Open the site in the Tabby browser, or `tabby session ensure --profile <id>` |
+| Connection refused on 9222 | Tabby session not running | `tabby session ensure --profile <id>` |
+| CORS error / `credentials include not allowed` | Cross-origin fetch blocked | Re-export with `--execution-mode http` |
+| 429 / "Too Many Requests" from CDP | Very rare — Akamai flagging in-browser too | Phase 1 — verify the account, consider HITL re-login |
+| Server was generated with `--execution-mode http` and returns 429 | httpx blocked by TLS fingerprinting | Re-export without `--execution-mode http` to land on the CDP default |
+| Empty credentials / `name: ""` (http mode only) | Tabby credential_types format bug | Phase 1, Fix A |
+| `No active profile found` (http mode only) | Profile still STAGING | Phase 1, Fix B |
 
 ### 0c. Confirm bot detection (if 429)
 
@@ -169,59 +172,52 @@ If the automated login DSL can't complete (Akamai blocks form interactions), log
 
 > **Port 9222 vs 9223:** Port 9222 is the direct CDP endpoint (full access). Port 9223 is Tabby's relay that only allows `Page.screencast*` and `Input.dispatch*Event`. Use 9222 for all workaround steps.
 
-### Fix E — Rewrite operations to use CDP fetch
+### Fix E — CDP execution is the default (no rewrite needed)
 
-When bot detection blocks Python HTTP clients, execute API calls from inside the browser. Two patterns:
+CDP-based execution is now the **default** generated output. A recently exported
+server already has operations that call `find_page` and `cdp_fetch` from
+`noui_runtime/cdp.py`. If you are hand-editing or need to reason about the
+pattern, the primitives are:
 
-**Pattern 1: CDP fetch (for JSON APIs)**
+```python
+from noui_runtime.cdp import find_page, cdp_fetch
+
+ws_url = await find_page("api.example.com")           # match the recorded domain
+result = await cdp_fetch(                             # fetch inside the browser
+    ws_url,
+    "https://api.example.com/v1/items",
+    method="POST",
+    headers={"Accept": "application/json"},
+    body={"name": "x"},                               # JSON-encoded automatically
+)
+```
+
+`cdp_fetch` always sets `credentials: 'include'`. The full specification lives
+in `compiler/runtime/cdp_adapter.py`.
+
+**When you still need to re-generate or hand-edit:**
+
+- The server was generated with `--execution-mode http` and keeps getting 429.
+  → Re-export without the flag to land on the CDP default.
+- You need SPA content that isn't exposed as a JSON API. → see *DOM-scrape
+  generalization* below.
+- The API truly cannot be reached from the browser origin (CORS, or
+  server-to-server endpoint). → keep `--execution-mode http` and fix the
+  underlying auth / credential issue instead.
+
+For the rationale (TLS fingerprinting, why 9222, why `credentials: 'include'`),
+see `/noui-record-workflow` → *How Execution Works*.
+
+### DOM-scrape generalization (SPA-rendered content)
+
+When data is rendered by client-side JS and not available as a JSON API, the
+generated `cdp_fetch` path won't work — you need to navigate and scrape the
+rendered DOM. This is a hand-written generalization on top of the CDP default:
 
 ```python
 import asyncio, json
-import httpx
 import websockets
 
-CDP_LIST_URL = "http://localhost:9222/json"
-
-async def _find_page(domain: str) -> str | None:
-    """Return WebSocket debugger URL for a page matching the domain."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(CDP_LIST_URL, timeout=5)
-        targets = resp.json()
-    for t in targets:
-        if t.get("type") == "page" and domain in t.get("url", ""):
-            return t["webSocketDebuggerUrl"]
-    return None
-
-async def _cdp_eval(ws_url: str, expression: str) -> dict:
-    """Evaluate JS in the browser and return parsed result."""
-    async with websockets.connect(ws_url) as ws:
-        await ws.send(json.dumps({
-            "id": 1, "method": "Runtime.evaluate",
-            "params": {"expression": expression, "awaitPromise": True, "returnByValue": True}
-        }))
-        resp = json.loads(await ws.recv())
-    result = resp["result"]["result"]
-    if result.get("type") != "string":
-        raise RuntimeError(f"CDP eval failed: {json.dumps(result)[:300]}")
-    return json.loads(result["value"])
-
-async def _cdp_fetch(ws_url: str, url: str) -> dict:
-    """Execute fetch() inside the browser and return parsed JSON."""
-    js = f"""
-    fetch({json.dumps(url)}, {{ credentials: 'include' }})
-      .then(r => r.text().then(t => JSON.stringify({{status: r.status, body: t}})))
-    """
-    data = await _cdp_eval(ws_url, js)
-    if data["status"] != 200:
-        raise RuntimeError(f"API returned {data['status']}: {data['body'][:300]}")
-    return json.loads(data["body"])
-```
-
-**Pattern 2: Navigate + DOM scrape (for SPA-rendered content)**
-
-When data is rendered by client-side JS and not available as a JSON API:
-
-```python
 async def _navigate_and_scrape(ws_url: str, url: str, extract_js: str, wait_seconds: int = 7) -> dict:
     """Navigate to a URL, wait for SPA render, then extract data via JS."""
     async with websockets.connect(ws_url) as ws:
@@ -230,7 +226,9 @@ async def _navigate_and_scrape(ws_url: str, url: str, extract_js: str, wait_seco
         }))
         await ws.recv()
     await asyncio.sleep(wait_seconds)
-    return await _cdp_eval(ws_url, extract_js)
+    # Reuse the CDP runtime's eval helper — same session, same cookies
+    from noui_runtime.cdp import cdp_eval
+    return await cdp_eval(ws_url, extract_js)
 ```
 
 To find the right DOM selectors, inspect `data-stid` or similar attributes:
@@ -245,14 +243,12 @@ JSON.stringify([...new Set(
 """
 ```
 
-**What to change in each operation file:**
+**What to change when adding DOM-scrape to an operation:**
 
-1. Remove `from noui_runtime.auth import resolve_auth` and the `httpx` request code
-2. Add `import websockets` (already in the venv)
-3. Add the CDP helpers above (or factor into a shared module)
-4. Replace each `httpx.get/post` call with `_cdp_fetch()` for JSON APIs
-5. Replace page-scraping logic with `_navigate_and_scrape()` for SPA content
-6. Use `credentials: 'include'` in all fetch calls
+1. Keep `from noui_runtime.cdp import find_page, cdp_eval` (the default module already exposes both).
+2. Add `import asyncio, json, websockets` for `Page.navigate`.
+3. Replace the `cdp_fetch(...)` call with `_navigate_and_scrape(ws_url, target_url, extract_js)`.
+4. Extract the shape you need via a JS expression that returns `JSON.stringify(...)`.
 
 > **Single browser instance caveat:** Tabby runs one CloakBrowser per session. CDP navigation changes the page — if keepalive actions need the homepage, coordinate or set keepalive to `dom_check` on `body` only.
 
@@ -364,7 +360,8 @@ When the user reports results, fix any issues:
 | Missing required parameter | Add it to signature and body |
 | Tool call fails with HTTP error | Read the error body, compare to original recording values |
 | Body encoding wrong | Check if original body was URL-encoded, JSON, or protobuf — reconstruct accordingly |
-| 429 from tool call | Bot detection — go back to Phase 1, Fix E |
+| 429 from tool call on a CDP-default server | Verify Tabby has an authenticated tab open; if yes, the account may be flagged — redo HITL login (Phase 1, Fix D) |
+| 429 from tool call on `--execution-mode http` server | Re-export without the flag to use the CDP default |
 | CDP connection refused | Tabby session not running — `tabby session ensure --profile <id>` |
 | `fetch()` returns 403 inside browser | Session expired — redo HITL login (Phase 1, Fix D) |
 
@@ -386,12 +383,56 @@ When in doubt: if the value was the same every time during recording and doesn't
 
 ---
 
+## Dynamic-Header-Injection Sites (JS-injected auth)
+
+Some SPAs acquire a short-lived bearer token in-memory (fetch from `/auth/init` or similar on page load), then wrap `window.fetch` / `XMLHttpRequest` with an interceptor that sets `Authorization: Bearer <jwt>` right before every XHR. The cookie jar is **empty** of auth material, `localStorage` / `sessionStorage` don't hold the bearer either, yet every real API call carries it. Calling the API from `cdp_fetch` with `credentials: 'include'` alone will get you a 401 or 403.
+
+### Detect
+
+- HAR contains an `Authorization: Bearer eyJ...` header whose JWT `jti` (or `sub`, `exp`) rotates between recordings of the same flow.
+- `document.cookie` at runtime does **not** include the bearer substring.
+- `localStorage` and `sessionStorage` dumps don't contain the bearer either.
+- The recorded API host is on a different subdomain from `www.*` (e.g. `api-prod-*`, `api.*`).
+
+### Workaround — CDP Network-event sniffing
+
+Enable CDP's `Network` domain, reload the page, listen for `Network.requestWillBeSent`, and grab the `Authorization` off the first request that matches your target host. Cache in `/tmp` with a TTL, invalidate on 401/403, retry once.
+
+Reference implementation (10-line core):
+
+```python
+await ws.send({"id": 1, "method": "Network.enable"})
+await ws.send({"id": 2, "method": "Page.reload"})
+deadline = loop.time() + 20
+while loop.time() < deadline:
+    msg = json.loads(await ws.recv())
+    if msg.get("method") != "Network.requestWillBeSent":
+        continue
+    url = msg["params"]["request"].get("url", "")
+    if TARGET_HOST not in url:
+        continue
+    authz = {k.lower(): v for k, v in msg["params"]["request"].get("headers", {}).items()}.get("authorization", "")
+    if authz.startswith("eyJ"):
+        return authz
+```
+
+See `.claude/skills/indigo-flight-search/noui_runtime/indigo_auth.py` for the full cache + retry wrapper around this core. The IndiGo skill is the canonical example of this pattern in this repo.
+
+> **Forward pointer:** When the retro-C1 generic `sniff_headers()` helper lands in `noui_runtime`, delete the hand-written module and replace the import. See `plans/noui/noui-agent-friction-retro-plan.md` Section C1.
+
+### Per-host static client IDs
+
+Sites of this shape often pair the dynamic JWT with a stable `user_key` / `x-api-key` / `x-client-id` header that is **per-host but constant across sessions** (look for the same value across every request to that host in the HAR). Hardcode those — they're infrastructure, not user input.
+
+---
+
 ## Known Anti-Bot Sites
 
 | Site | Bot Detection | CloakBrowser Login | Workaround |
 |---|---|---|---|
 | Expedia | Akamai Bot Manager | Form blocked silently; reaches homepage but can't submit | HITL login + CDP fetch + DOM scrape |
-| (add more as discovered) | | | |
+| Generic SPA with JS-injected auth | Token not in cookies/localStorage; `Authorization` is set by a fetch interceptor in the page's JS bundle | n/a (site may be anonymous) | Sniff the `Authorization` via CDP `Network.requestWillBeSent` on page reload; cache per session. See *Dynamic-Header-Injection Sites* above. |
+| IndiGo (`api-prod-*-skyplus6e.goindigo.in`) | Anonymous session; per-host `user_key` + rotating JWT; Akamai cookies | n/a | Hardcode per-host `user_key`s; sniff JWT at runtime. Reference: `indigo-flight-search` skill. |
 
 ---
 
@@ -414,18 +455,30 @@ Start
   ├─ Works (200 with data)?
   │     └─ Skip to Phase 2 (interface cleanup)
   │
-  ├─ 429 / bot detection?
-  │     ├─ Confirm: browser fetch works but httpx doesn't
-  │     └─ Phase 1: Fix E (CDP rewrite)
+  ├─ "No Tabby page matching <domain>"?
+  │     └─ Open the site in Tabby, or `tabby session ensure --profile <id>`
   │
-  ├─ Empty credentials / name: "" ?
+  ├─ CORS / cross-origin error?
+  │     └─ Re-export with `--execution-mode http`
+  │
+  ├─ 429 on a default-mode server?
+  │     └─ Phase 1: Fix D (HITL re-login) — the session or account is flagged
+  │
+  ├─ 429 on an `--execution-mode http` server?
+  │     └─ Re-export without the flag to land on the CDP default
+  │
+  ├─ Empty credentials / name: "" (http mode)?
   │     └─ Phase 1: Fix A (credential_types format)
   │
-  ├─ "No active profile" ?
+  ├─ "No active profile" (http mode)?
   │     └─ Phase 1: Fix B (promote to ACTIVE)
   │
   ├─ Login didn't actually work?
   │     └─ Phase 1: Fix D (HITL login)
+  │
+  ├─ 401/403 on default CDP server, cookies appear correct?
+  │     └─ Check HAR: is `Authorization` present and does its JWT `jti` rotate across recordings?
+  │         └─ Yes → Dynamic-header-injection pattern; see *Dynamic-Header-Injection Sites* section
   │
   Phase 2: Read tools.json + operations + ask user about workflow
   │

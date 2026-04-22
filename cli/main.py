@@ -58,6 +58,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -175,6 +176,298 @@ def _cdp_is_reachable(host: str = "localhost", port: int = 9222, timeout: float 
             return True
     except OSError:
         return False
+
+
+def _tabby_worker_build_state() -> tuple[str, str]:
+    """Report the freshness of the Tabby worker's compiled output.
+
+    Returns a tuple ``(state, detail)`` where ``state`` is one of:
+        - ``"ok"``   — `dist/main.js` exists and is newer than every .ts file under src/.
+        - ``"missing"`` — the worker has never been built (no dist/main.js).
+        - ``"stale"`` — a source file is newer than the compiled output.
+        - ``"no-worker"`` — the worker directory itself doesn't exist (e.g. fresh
+          checkout without submodule init); this is not the normal build-state
+          concern and callers should surface it differently.
+
+    ``detail`` is a short human-readable explanation (what file is missing,
+    which .ts triggered the stale signal, etc.) suitable for printing next to
+    the state label.
+
+    Used by `noui status`, `noui tabby setup`, and `noui tabby session ensure`
+    to fail fast instead of letting the worker crash-loop and reporting only
+    "Session did not pass health check within 5 minutes" after waiting.
+    """
+    worker_dir = TABBY_DIR / "apps" / "worker"
+    if not worker_dir.exists():
+        return ("no-worker", f"worker directory not found: {worker_dir}")
+
+    main_js = worker_dir / "dist" / "main.js"
+    if not main_js.exists():
+        return ("missing", f"{main_js} not found — worker has never been built")
+
+    src_dir = worker_dir / "src"
+    if not src_dir.exists():
+        # Build output exists but source dir is missing; treat as ok (we can't prove staleness).
+        return ("ok", f"{main_js} present (no src/ to compare)")
+
+    main_js_mtime = main_js.stat().st_mtime
+    newest_src = main_js_mtime
+    newest_path = ""
+    for ts_file in src_dir.rglob("*.ts"):
+        try:
+            mtime = ts_file.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > newest_src:
+            newest_src = mtime
+            newest_path = str(ts_file.relative_to(worker_dir))
+
+    if newest_src > main_js_mtime:
+        return ("stale", f"{newest_path} is newer than dist/main.js")
+    return ("ok", f"{main_js.relative_to(TABBY_DIR)} up to date")
+
+
+def _tabby_worker_build_hint() -> str:
+    """Return the exact shell command to fix a missing/stale worker build."""
+    return f"pnpm install && pnpm nx build worker  # run inside {TABBY_DIR}"
+
+
+# Patterns that indicate a worker cannot possibly become HEALTHY — short-circuit
+# the 5-minute health-check wait and surface the failure.
+_WORKER_FATAL_PATTERNS = (
+    "MODULE_NOT_FOUND",
+    "Cannot find module",
+    "ERR_REQUIRE_ESM",
+    "SyntaxError:",
+    "ReferenceError:",
+    "TypeError:",
+    "UnhandledPromiseRejection",
+    "address already in use",
+    "EADDRINUSE",
+    "ECONNREFUSED",  # worker's own deps (redis/postgres) unreachable
+    "Error: connect ECONNREFUSED",
+)
+
+# Patterns that indicate forward progress — surface verbatim to the user so they
+# see the worker actually booting instead of watching progress dots.
+_WORKER_PROGRESS_PATTERNS = (
+    "listening on",
+    "Nest application successfully started",
+    "Worker ready",
+    "Health check passed",
+    "Starting browser",
+    "CloakBrowser",
+)
+
+
+def _navigate_cdp_page(url: str, *, timeout: float = 15.0) -> tuple[bool, str]:
+    """Navigate the Tabby-managed Chrome tab to ``url`` via CDP.
+
+    Finds the first page target at localhost:9222/json, sends Page.navigate,
+    and waits briefly for the URL to settle. Returns ``(ok, detail)``.
+
+    Used by `tabby session ensure --open ...` and `--skill ...` so users
+    don't have to hand-write a Page.navigate call for every anonymous-session
+    site whose cookies are provisioned on page load.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://localhost:9222/json", timeout=5) as resp:
+            targets = _json.load(resp)
+    except (OSError, urllib.error.URLError) as exc:
+        return (False, f"CDP endpoint unreachable at localhost:9222 ({exc})")
+
+    page_target = next((t for t in targets if t.get("type") == "page"), None)
+    if not page_target:
+        return (False, "no page target found at localhost:9222/json")
+    target_id = page_target.get("id", "")
+    if not target_id:
+        return (False, "page target has no id")
+
+    # Send Page.navigate over the HTTP-to-WS bridge. Using websockets keeps the
+    # dependency surface the same as noui_runtime/cdp.py (already vendored).
+    try:
+        import websockets  # type: ignore  # noqa: F401
+    except ImportError:
+        return (False, "websockets package not available in the CLI venv")
+
+    async def _navigate() -> tuple[bool, str]:
+        import websockets as _ws  # type: ignore
+
+        ws_url = page_target.get("webSocketDebuggerUrl") or ""
+        if not ws_url:
+            return (False, "no webSocketDebuggerUrl on page target")
+        try:
+            async with _ws.connect(ws_url, max_size=10_000_000) as ws:
+                await ws.send(
+                    _json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}})
+                )
+                await asyncio.wait_for(ws.recv(), timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            return (False, f"CDP navigate failed: {exc}")
+        return (True, f"navigated to {url}")
+
+    import asyncio
+
+    try:
+        return asyncio.run(asyncio.wait_for(_navigate(), timeout=timeout))
+    except TimeoutError:
+        return (False, f"navigation timed out after {timeout}s")
+
+
+def _skill_manifest_start_url(skill_id: str) -> tuple[str, str]:
+    """Look up `workflow.start_url` in a generated skill's manifest.
+
+    Checks `workbench/skills/<id>/manifest.json` first. For skills generated
+    before B4 landed (manifest lacks start_url), falls back to the noui
+    backend's workflow-sessions endpoint using the recorded session_id.
+    Returns ``(url, source)`` where ``source`` is ``"manifest"``, ``"backend"``,
+    or ``""`` on miss.
+    """
+    manifest_path = _find_skill_manifest(skill_id)
+    if not (manifest_path and manifest_path.exists()):
+        return ("", "")
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception:
+        return ("", "")
+
+    workflow = manifest.get("workflow") or {}
+    url = workflow.get("start_url") or ""
+    if url:
+        return (url, "manifest")
+
+    session_id = workflow.get("workflow_session_id", "")
+    if not session_id:
+        return ("", "")
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"{BACKEND_URL}/workflow-sessions/{session_id}", timeout=5
+        ) as r:
+            data = json.loads(r.read().decode())
+        url = data.get("start_url", "")
+        if url:
+            return (url, "backend")
+    except Exception:
+        pass
+    return ("", "")
+
+
+def _print_worker_log_tail(log_path: Path, start_offset: int, *, n: int = 30) -> None:
+    """Print the last ``n`` non-blank lines of the worker log to stderr.
+
+    ``start_offset`` scopes the tail to lines written since the current
+    `session ensure` invocation began, so we don't leak noise from previous
+    crashes. Falls back to the whole-file tail when the bounded read is
+    empty (e.g. the worker died before writing anything new).
+    """
+    try:
+        if log_path.exists():
+            size = log_path.stat().st_size
+            if size > start_offset:
+                with log_path.open("rb") as fh:
+                    fh.seek(start_offset)
+                    chunk = fh.read().decode("utf-8", errors="replace")
+                lines = [ln.rstrip() for ln in chunk.splitlines() if ln.strip()][-n:]
+                if lines:
+                    print(f"  Worker logs: {log_path}", file=sys.stderr)
+                    print(f"  Last {len(lines)} lines since this ensure started:", file=sys.stderr)
+                    for line in lines:
+                        print(f"    {line}", file=sys.stderr)
+                    return
+        # Fallback: whole-file tail (covers the case where the offset logic
+        # can't find anything new, e.g. file truncated).
+        lines = _tail_file_lines(log_path, n)
+        if lines:
+            print(f"  Worker logs: {log_path}", file=sys.stderr)
+            print(f"  Last {len(lines)} lines:", file=sys.stderr)
+            for line in lines:
+                print(f"    {line}", file=sys.stderr)
+        else:
+            print(f"  Worker logs: {log_path} (empty)", file=sys.stderr)
+    except Exception as exc:
+        # Never let log-tail failures mask the real error.
+        print(f"  (could not read worker log tail: {exc})", file=sys.stderr)
+
+
+def _tail_file_lines(path: Path, n: int) -> list[str]:
+    """Return the last ``n`` non-blank lines of ``path``, oldest first.
+
+    Robust against missing files and decode errors. Used by session-ensure's
+    timeout branch and by the log-streaming tailer for retrospective context.
+    """
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return lines[-n:]
+
+
+def _spawn_worker_log_tailer(
+    log_path: Path, fatal_event: threading.Event, start_offset: int
+) -> threading.Thread:
+    """Start a daemon thread that tails ``log_path`` from byte ``start_offset``.
+
+    Echoes progress lines directly; on a fatal pattern match, prints the line
+    and sets ``fatal_event`` so the main poll loop can exit early instead of
+    waiting for the full 5-minute health-check timeout.
+
+    The tailer is a best-effort aid: it runs until the event is set or the
+    process exits. It does not guarantee delivery of every line (file reads
+    are bounded to 64 KiB per tick) and does not block the main loop.
+    """
+
+    def _run() -> None:
+        offset = start_offset
+        while not fatal_event.is_set():
+            try:
+                if not log_path.exists():
+                    time.sleep(0.5)
+                    continue
+                size = log_path.stat().st_size
+                if size < offset:
+                    # File was truncated / rotated; reset.
+                    offset = 0
+                if size <= offset:
+                    time.sleep(0.5)
+                    continue
+                with log_path.open("rb") as fh:
+                    fh.seek(offset)
+                    chunk = fh.read(min(size - offset, 65536))
+                offset += len(chunk)
+                try:
+                    text = chunk.decode("utf-8", errors="replace")
+                except Exception:
+                    continue
+                for raw_line in text.splitlines():
+                    line = raw_line.rstrip()
+                    if not line:
+                        continue
+                    if any(pat in line for pat in _WORKER_FATAL_PATTERNS):
+                        # Newline to break out of the "progress dots" row, then the line.
+                        print()
+                        print(_red(f"  [worker] {line[:400]}"))
+                        fatal_event.set()
+                        return
+                    if any(pat in line for pat in _WORKER_PROGRESS_PATTERNS):
+                        print()
+                        print(_cyan(f"  [worker] {line[:200]}"))
+            except Exception:
+                # Never let the tailer itself take down the command.
+                time.sleep(1)
+
+    thread = threading.Thread(target=_run, name="tabby-worker-log-tailer", daemon=True)
+    thread.start()
+    return thread
 
 
 def _mark_session_terminated(session_id: str) -> None:
@@ -1072,6 +1365,7 @@ def cmd_workflow_export(args: argparse.Namespace) -> int:
     profile_db_id: str = getattr(args, "profile_db_id", "")
     capture_session_id: str = getattr(args, "capture_session", "")
     description_override: str = getattr(args, "description_override", "")
+    execution_mode: str = getattr(args, "execution_mode", "cdp")
     do_verify: bool = getattr(args, "verify", False)
 
     if target not in ("mcp", "skill", "both"):
@@ -1080,7 +1374,7 @@ def cmd_workflow_export(args: argparse.Namespace) -> int:
 
     from urllib.parse import quote_plus
 
-    params: list[str] = [f"as={target}"]
+    params: list[str] = [f"as={target}", f"execution_mode={execution_mode}"]
     if profile_id:
         params.append(f"tabby_profile_id={profile_id}")
     if profile_slug:
@@ -1473,8 +1767,9 @@ def cmd_autopilot_export(args: argparse.Namespace) -> int:
     wf_id = args.workflow_session_id
     cs_id = args.capture_session_id
     profile_slug = getattr(args, "profile_slug", "")
+    execution_mode = getattr(args, "execution_mode", "cdp")
 
-    params = [f"capture_session_id={cs_id}", "as=mcp"]
+    params = [f"capture_session_id={cs_id}", "as=mcp", f"execution_mode={execution_mode}"]
     if profile_slug:
         params.append(f"profile_slug={profile_slug}")
     path = f"/workflow-sessions/{wf_id}/export?" + "&".join(params)
@@ -2633,8 +2928,14 @@ def cmd_skill_list(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def cmd_skill_show(args: argparse.Namespace) -> int:
-    """Print a skill's manifest and SKILL.md preview."""
+    """Print a skill's manifest and SKILL.md preview.
+
+    With --smoke, also invoke each operation with `--help` to catch import
+    errors / missing deps before agent invocation time.
+    """
     skill_id: str = args.skill_id
+    smoke: bool = getattr(args, "smoke", False)
+
     manifest_path = _find_skill_manifest(skill_id)
     if not manifest_path:
         print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
@@ -2669,16 +2970,255 @@ def cmd_skill_show(args: argparse.Namespace) -> int:
         print(_bold("SKILL.md (frontmatter + preview):"))
         head = body[:fm_end] + "\n".join(body[fm_end:].splitlines()[:20])
         print(head)
+
+    if smoke:
+        return _smoke_test_skill(manifest, skill_dir)
+    return 0
+
+
+def _smoke_test_skill(manifest: dict, skill_dir: Path) -> int:
+    """Run `python <op> --help` for each operation and report pass/fail.
+
+    Uses manifest.runtime.python_executable (resolved under skill_dir) when
+    present, falling back to `sys.executable`. A failing `--help` means the
+    operation can't even import — Claude Code won't be able to invoke it
+    either.
+    """
+    import subprocess
+
+    runtime = manifest.get("runtime", {}) or {}
+    python_rel = runtime.get("python_executable", "")
+    python_exe: str
+    if python_rel:
+        python_path = skill_dir / python_rel
+        python_exe = str(python_path) if python_path.exists() else sys.executable
+        if not python_path.exists():
+            print(
+                _yellow(
+                    f"  runtime.python_executable {python_rel!r} not found; falling back to {sys.executable}"
+                )
+            )
+    else:
+        python_exe = sys.executable
+
+    operations = manifest.get("operations", []) or []
+    if not operations:
+        print(_yellow("No operations to smoke-test."))
+        return 0
+
+    print()
+    print(_bold("Smoke test (--help per operation):"))
+    print()
+    width = max(len(op.get("name", "?")) for op in operations) + 2
+    any_failed = False
+    for op in operations:
+        name = op.get("name", "?")
+        module_rel = op.get("module", f"operations/{name}.py")
+        module_path = skill_dir / module_rel
+        if not module_path.exists():
+            print(f"  {_red('FAIL'):10} {name:<{width}}  module file missing: {module_rel}")
+            any_failed = True
+            continue
+        try:
+            completed = subprocess.run(
+                [python_exe, str(module_path), "--help"],
+                cwd=str(skill_dir),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  {_red('TIMEOUT'):10} {name:<{width}}  --help did not return within 5s")
+            any_failed = True
+            continue
+        except Exception as exc:
+            print(f"  {_red('ERROR'):10} {name:<{width}}  {exc}")
+            any_failed = True
+            continue
+        if completed.returncode == 0:
+            print(f"  {_green('ok'):10} {name:<{width}}")
+        else:
+            err_first = (completed.stderr or completed.stdout or "").splitlines()
+            err_snippet = err_first[-1] if err_first else f"exit {completed.returncode}"
+            print(f"  {_red('FAIL'):10} {name:<{width}}  {err_snippet[:120]}")
+            any_failed = True
+    print()
+    if any_failed:
+        print(_red("One or more operations failed smoke test."))
+        return 1
+    print(_green("All operations passed smoke test."))
+    return 0
+
+
+def cmd_skill_docs(args: argparse.Namespace) -> int:
+    """Regenerate SKILL.md + API.md for a skill, preserving custom-fenced regions.
+
+    Mirrors `cmd_mcp_docs` for the skill output format. Reads the current
+    `manifest.json` and re-emits docs using the operation list, auth plan, and
+    identity fields from the manifest. Custom-fenced regions (``<!-- custom:
+    start:NAME --> … <!-- custom:end:NAME -->``) in the existing SKILL.md /
+    API.md are carried forward verbatim.
+    """
+    skill_id: str = args.skill_id
+    check_only: bool = getattr(args, "check", False)
+
+    manifest_path = _find_skill_manifest(skill_id)
+    if manifest_path is None:
+        print(_red(f"Skill {skill_id!r} not found in {SKILLS_DIR}"))
+        return 1
+    skill_dir = manifest_path.parent
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        print(_red(f"Failed to parse manifest.json: {exc}"))
+        return 1
+
+    app_info = manifest.get("app", {}) or {}
+    app_name = app_info.get("name", _slug_to_title(skill_id))
+    app_slug = app_info.get("slug", skill_id)
+    workflow_info = manifest.get("workflow", {}) or {}
+    workflow_name = workflow_info.get("name", app_name)
+    auth_info = manifest.get("auth", {}) or {}
+    profile_slug = auth_info.get("profile_slug") or ""
+    runtime = manifest.get("runtime", {}) or {}
+    python_executable = runtime.get("python_executable", ".venv/bin/python")
+
+    # Reconstruct tool_defs from manifest.operations. Note: operations[].args
+    # loses some richness (no request body shape) vs HAR-derived tool_defs; the
+    # renderer tolerates missing fields and omits sections that would be empty.
+    tool_defs: list[dict] = []
+    for op in manifest.get("operations", []) or []:
+        tool_defs.append(
+            {
+                "name": op.get("name", "?"),
+                "description": op.get("description", op.get("name", "?")),
+                "method": op.get("method", "?"),
+                "path": op.get("path", "?"),
+                "params": [
+                    {
+                        "name": a.get("name", "?"),
+                        "type": a.get("type", "string"),
+                        "required": bool(a.get("required", False)),
+                        **({"default": a["default"]} if "default" in a else {}),
+                    }
+                    for a in op.get("args", []) or []
+                ],
+            }
+        )
+
+    # Load the auth_plan.json if referenced, so description-synth knows the profile context.
+    auth_plan: dict = {}
+    auth_plan_file = auth_info.get("auth_plan_file")
+    if auth_plan_file:
+        auth_plan_path = skill_dir / auth_plan_file
+        if auth_plan_path.exists():
+            try:
+                auth_plan = json.loads(auth_plan_path.read_text())
+            except Exception:
+                auth_plan = {}
+    # Treat any requires_auth=True as having auth_plan for rendering purposes
+    if auth_info.get("requires_auth") and not auth_plan:
+        auth_plan = {"strategy": auth_info.get("strategy") or "tabby_credentials"}
+
+    try:
+        sys.path.insert(0, str(NOUI_DIR))
+        from compiler.mcp.api_doc_generator import generate_api_markdown
+        from compiler.skill.skill_md_generator import render_skill_md
+    except ImportError as exc:
+        print(_red(f"Cannot import skill doc generators: {exc}"))
+        return 1
+
+    skill_md_path = skill_dir / "SKILL.md"
+    api_md_path = skill_dir / "API.md"
+
+    existing_skill_md = (
+        skill_md_path.read_text(encoding="utf-8") if skill_md_path.exists() else None
+    )
+    existing_api_md = api_md_path.read_text(encoding="utf-8") if api_md_path.exists() else None
+
+    new_skill_md = render_skill_md(
+        skill_id=skill_id,
+        app_name=app_name,
+        app_slug=app_slug,
+        workflow_name=workflow_name,
+        tool_defs=tool_defs,
+        auth_plan=auth_plan,
+        profile_slug=profile_slug,
+        python_executable=python_executable,
+        existing=existing_skill_md,
+    )
+    new_api_md = generate_api_markdown(
+        server_id=skill_id,
+        app_name=app_name,
+        app_slug=app_slug,
+        workflow_name=workflow_name,
+        tool_defs=tool_defs,
+        tabby_profile_id=profile_slug,
+        existing=existing_api_md,
+    )
+
+    def _strip_timestamp(text: str) -> str:
+        return "\n".join(
+            line for line in text.splitlines() if not line.startswith("> **Generated by NoUI** on ")
+        )
+
+    if check_only:
+        stale = False
+        for label, existing, fresh in (
+            ("SKILL.md", existing_skill_md, new_skill_md),
+            ("API.md", existing_api_md, new_api_md),
+        ):
+            if existing is None:
+                print(
+                    _red(f"{label} does not exist — run `noui skill docs {skill_id}` to generate")
+                )
+                stale = True
+                continue
+            if _strip_timestamp(existing) != _strip_timestamp(fresh):
+                print(_red(f"{label} is stale — run `noui skill docs {skill_id}` to refresh"))
+                stale = True
+            else:
+                print(_green(f"{label} is up to date"))
+        return 1 if stale else 0
+
+    skill_md_path.write_text(new_skill_md, encoding="utf-8")
+    api_md_path.write_text(new_api_md, encoding="utf-8")
+    print(_green(f"SKILL.md written: {skill_md_path}"))
+    print(_green(f"API.md written: {api_md_path}"))
+
+    # Keep manifest artifacts.files in sync (ensure both doc files listed).
+    artifacts = manifest.setdefault("artifacts", {})
+    artifacts.setdefault("skill_file", "SKILL.md")
+    artifacts.setdefault("api_docs_file", "API.md")
+    files_list: list = artifacts.get("files", []) or []
+    for required in ("SKILL.md", "API.md"):
+        if required not in files_list:
+            files_list.append(required)
+    artifacts["files"] = files_list
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return 0
 
 
 def cmd_skill_install(args: argparse.Namespace) -> int:
-    """Copy a generated skill into the target agent's skills directory."""
+    """Copy (or symlink) a generated skill into the target agent's skills directory.
+
+    Flags:
+        --symlink: link the install path to the workbench source instead of
+            copying. Edits in either location are visible from the other.
+            Fails gracefully on platforms without symlink support.
+        --with-env: provision a Python virtualenv inside the install dir so
+            the skill's operations have their declared deps. Values: auto|uv|
+            venv|none. Default none.
+    """
+    import os
     import shutil
 
     skill_id: str = args.skill_id
     agent: str = args.agent
     project: bool = getattr(args, "project", False)
+    symlink: bool = getattr(args, "symlink", False)
+    with_env: str = getattr(args, "with_env", "none") or "none"
 
     manifest_path = _find_skill_manifest(skill_id)
     if not manifest_path:
@@ -2694,13 +3234,97 @@ def cmd_skill_install(args: argparse.Namespace) -> int:
     dest = dest_root / skill_id
 
     dest_root.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        shutil.rmtree(dest)  # overwrite silently per plan
-    shutil.copytree(src, dest)
+
+    # Handle an existing install. Only rmtree a regular dir; if it's already a
+    # symlink, just unlink it (don't follow into workbench and delete files).
+    if dest.is_symlink():
+        dest.unlink()
+    elif dest.exists():
+        shutil.rmtree(dest)
+
+    if symlink:
+        try:
+            os.symlink(src.resolve(), dest, target_is_directory=True)
+        except OSError as exc:
+            print(
+                _red(
+                    f"Symlink failed ({exc}). On Windows this typically needs developer mode or admin. "
+                    f"Retry without --symlink to use copy mode."
+                )
+            )
+            return 3
+    else:
+        shutil.copytree(src, dest)
 
     scope = "project" if project else "global"
-    print(_green(f"Installed {_cyan(skill_id)} for {_bold(agent)} ({scope})"))
+    link_mode = "symlink" if symlink else "copy"
+    print(_green(f"Installed {_cyan(skill_id)} for {_bold(agent)} ({scope}, {link_mode})"))
     print(f"  {dest}")
+
+    # --with-env provisioning (D2). Skip by default in symlink mode so we don't
+    # create a .venv in the workbench source; the user can opt in explicitly.
+    if with_env != "none":
+        env_dir = dest if not symlink else src
+        rc = _provision_skill_env(env_dir, mode=with_env)
+        if rc != 0:
+            return rc
+
+    return 0
+
+
+def _provision_skill_env(skill_dir: Path, *, mode: str) -> int:
+    """Run `uv sync` or `python -m venv + pip install -e .` inside `skill_dir`.
+
+    `mode` is one of auto | uv | venv | none. `none` is a no-op.
+    `auto` picks uv when available, else venv, else prints the manual command.
+    """
+    import shutil
+    import subprocess
+
+    if mode == "none":
+        return 0
+
+    uv_path = shutil.which("uv")
+
+    if mode == "uv" and not uv_path:
+        print(_red("--with-env uv requested but `uv` is not on PATH."))
+        return 4
+
+    if mode == "auto" and not uv_path:
+        # Fall back to venv if python is available, else bail with a hint.
+        mode = "venv"
+
+    if mode in ("uv", "auto") and uv_path:
+        print(_bold(f"Provisioning environment via `uv sync` in {skill_dir} …"))
+        rc = subprocess.call([uv_path, "sync"], cwd=str(skill_dir))
+        if rc != 0:
+            print(_red(f"`uv sync` failed with exit code {rc}."))
+            return rc
+        print(_green("Environment ready."))
+        return 0
+
+    # venv fallback
+    python_cmd = shutil.which("python3") or shutil.which("python")
+    if not python_cmd:
+        print(
+            _red(
+                "Neither `uv` nor `python` is on PATH. Run one of the following inside "
+                f"{skill_dir}:\n  uv sync\n  python -m venv .venv && .venv/bin/pip install -e ."
+            )
+        )
+        return 5
+
+    print(_bold(f"Provisioning environment via venv+pip in {skill_dir} …"))
+    venv_rc = subprocess.call([python_cmd, "-m", "venv", ".venv"], cwd=str(skill_dir))
+    if venv_rc != 0:
+        print(_red(f"venv creation failed with exit code {venv_rc}."))
+        return venv_rc
+    pip_path = str(skill_dir / ".venv" / "bin" / "pip")
+    pip_rc = subprocess.call([pip_path, "install", "-e", "."], cwd=str(skill_dir))
+    if pip_rc != 0:
+        print(_red(f"`pip install -e .` failed with exit code {pip_rc}."))
+        return pip_rc
+    print(_green("Environment ready."))
     return 0
 
 
@@ -3188,12 +3812,27 @@ def cmd_tabby_status(args: argparse.Namespace) -> int:  # noqa: ARG001
     else:
         print(_yellow("  (could not reach Docker Compose — is Docker running?)"))
     print()
+
+    print(_bold("Tabby worker build:"))
+    build_state, detail = _tabby_worker_build_state()
+    if build_state == "ok":
+        print(_green(f"  ✓  {detail}"))
+    elif build_state == "missing":
+        print(_red(f"  ✗  {detail}"))
+        print(f"     Fix: {_bold(_tabby_worker_build_hint())}")
+    elif build_state == "stale":
+        print(_yellow(f"  !  {detail}"))
+        print(f"     Rebuild: {_bold(_tabby_worker_build_hint())}")
+    else:
+        print(_yellow(f"  !  {detail}"))
+    print()
+
     print(_bold("Tabby API:"))
     if _tabby_alive():
         pid = _read_pid(TABBY_PID_FILE)
         pid_label = f" (PID {pid})" if pid else ""
         print(_green(f"  ✓  API ready at {TABBY_API_HOST}{pid_label}"))
-        return 0
+        return 0 if build_state == "ok" else 1
     else:
         print(_red(f"  ✗  API not reachable at {TABBY_API_HOST}"))
         print(f"     Run: {_bold('noui tabby start')}")
@@ -3326,6 +3965,20 @@ def cmd_tabby_stop(args: argparse.Namespace) -> int:
 
 def cmd_tabby_setup(args: argparse.Namespace) -> int:
     """Full end-to-end Tabby provisioning for NoUI."""
+    build_state, detail = _tabby_worker_build_state()
+    if build_state in ("missing", "stale"):
+        print(_red(f"Tabby worker is not ready: {detail}"))
+        print(f"  Run this first: {_bold(_tabby_worker_build_hint())}")
+        print("  Then retry `noui tabby setup`. We refuse to proceed because the worker")
+        print(
+            "  would crash on every `tabby session ensure`, failing silently after a 5-minute wait."
+        )
+        return 1
+    if build_state == "no-worker":
+        print(_red(f"Tabby source tree missing: {detail}"))
+        print("  Did the submodule init? Try: `git submodule update --init --recursive`.")
+        return 1
+
     if not _tabby_alive():
         print("Tabby API is not running — starting it first …")
         print()
@@ -3550,6 +4203,18 @@ def cmd_session_status(args: argparse.Namespace) -> int:  # noqa: ARG001
 
 
 def cmd_session_ensure(args: argparse.Namespace) -> int:
+    build_state, detail = _tabby_worker_build_state()
+    if build_state in ("missing", "stale"):
+        print(_red(f"Tabby worker is not ready: {detail}"))
+        print(f"  Run: {_bold(_tabby_worker_build_hint())}")
+        print("  `tabby session ensure` would otherwise hang up to 5 minutes waiting for a")
+        print("  worker that never successfully starts. Fix the build first.")
+        return 1
+    if build_state == "no-worker":
+        print(_red(f"Tabby source tree missing: {detail}"))
+        print("  Run: `git submodule update --init --recursive`")
+        return 1
+
     if not _tabby_alive():
         print(_red(f"Tabby API is not running. Run: {_bold('noui tabby start')}"))
         return 1
@@ -3601,6 +4266,8 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         pid = _read_pid(TABBY_WORKER_PID_FILE)
         if pid and _pid_running(pid) and _cdp_is_reachable():
             print(_green(f"✓ Session for '{profile_id}' is already HEALTHY"))
+            # Still honor --open / --skill against the existing session.
+            _maybe_navigate_from_args(args)
             return 0
         # Worker has died but DB still shows HEALTHY — clear the stale state
         _mark_session_terminated(healthy[0]["id"])
@@ -3665,6 +4332,9 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
         pass
 
     TABBY_WORKER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # Record the log's current size so the tailer only shows lines from this
+    # worker invocation, not stale lines from a previous crash.
+    log_start_offset = TABBY_WORKER_LOG_FILE.stat().st_size if TABBY_WORKER_LOG_FILE.exists() else 0
     worker_log_fh = open(TABBY_WORKER_LOG_FILE, "a")  # noqa: SIM115
     proc = subprocess.Popen(
         ["pnpm", "--filter", "@browser-hitl/worker", "start"],
@@ -3676,14 +4346,34 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
     )
     TABBY_WORKER_PID_FILE.write_text(str(proc.pid))
     print(f"  Worker started (PID {proc.pid}) — logs → {_cyan(str(TABBY_WORKER_LOG_FILE))}")
+
+    # B2: stream the log alongside the health-check poll. A fatal pattern in
+    # the tailer sets this event so we exit early instead of waiting 5 minutes.
+    fatal_event = threading.Event()
+    _spawn_worker_log_tailer(TABBY_WORKER_LOG_FILE, fatal_event, log_start_offset)
+
     print()
     print("  Waiting for health check to pass", end="", flush=True)
 
     final_state = ""
     final_health = ""
+    timed_out = False
     for _ in range(60):
         time.sleep(5)
+        if fatal_event.is_set():
+            # The tailer already printed the offending line.
+            print(_red("  Worker emitted a fatal log line — aborting health-check wait."))
+            print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+            return 1
         print(".", end="", flush=True)
+        # Worker process died entirely? No point waiting further.
+        if proc.poll() is not None:
+            print()
+            print(
+                _red(f"Worker process exited with code {proc.returncode} before becoming HEALTHY.")
+            )
+            _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
+            return 1
         try:
             resp = _tabby_http("GET", f"/sessions/{session_id}", token=admin_token)
             assert isinstance(resp, dict)
@@ -3694,15 +4384,21 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             if final_state in ("FAILED", "TERMINATED") or final_health == "AUTH_FAIL":
                 print()
                 print(_red(f"Session failed (state={final_state}, health={final_health})."))
-                print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+                _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
                 return 1
         except (RuntimeError, AssertionError):
             pass
     else:
+        timed_out = True
+
+    if timed_out:
         print()
         print(_red("Session did not pass health check within 5 minutes."))
-        print(f"  Worker logs: {TABBY_WORKER_LOG_FILE}")
+        _print_worker_log_tail(TABBY_WORKER_LOG_FILE, log_start_offset, n=30)
         return 1
+
+    # Signal the tailer to stop — we're past the health-check gate.
+    fatal_event.set()
 
     print()
 
@@ -3736,11 +4432,52 @@ def cmd_session_ensure(args: argparse.Namespace) -> int:
             return 1
 
     print(_green(f"✓ Session for '{profile_id}' is HEALTHY"))
+
+    _maybe_navigate_from_args(args)
+
     print()
     print("  You can now record a workflow with Tabby auth:")
     _cmd = 'noui workflow record "My Workflow" <url>'
     print(f"    {_bold(_cmd)}")
     return 0
+
+
+def _maybe_navigate_from_args(args: argparse.Namespace) -> None:
+    """If --open or --skill was passed, navigate the CDP tab to the target URL.
+
+    Silent no-op when neither is passed. On failure, prints a warning but does
+    not fail the command — the session is HEALTHY regardless; users can
+    navigate manually via the CDP relay at localhost:9222 if this best-effort
+    navigation doesn't work.
+    """
+    target_url: str = getattr(args, "open_url", None) or ""
+    skill_arg: str = getattr(args, "open_skill", None) or ""
+    if skill_arg and not target_url:
+        target_url, source = _skill_manifest_start_url(skill_arg)
+        if not target_url:
+            print(
+                _yellow(
+                    f"  Skill '{skill_arg}' has no start_url — pass --open URL directly. "
+                    "Skills generated before B4 won't carry start_url in manifest; "
+                    "re-export to populate it."
+                )
+            )
+            return
+        print(f"  Resolved --skill {skill_arg} start_url from {source}: {target_url}")
+    if not target_url:
+        return
+    print(f"  Navigating browser to {_cyan(target_url)} …", end=" ", flush=True)
+    ok, detail = _navigate_cdp_page(target_url)
+    if ok:
+        print(_green("✓"))
+    else:
+        print(_yellow("⚠"))
+        print(
+            _yellow(
+                f"  Navigation failed ({detail}). Session is still HEALTHY; you can "
+                "navigate manually via the CDP relay at localhost:9222."
+            )
+        )
 
 
 def cmd_session_stop(args: argparse.Namespace) -> int:  # noqa: ARG001
@@ -3887,6 +4624,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Run auth verification after MCP export; report PASS/NEEDS_SECRET before install",
     )
+    wf_export.add_argument(
+        "--execution-mode",
+        default="cdp",
+        choices=["cdp", "http"],
+        dest="execution_mode",
+        help=(
+            "Execution strategy: 'cdp' (default, runs inside Tabby's browser) "
+            "or 'http' (legacy httpx + resolve_auth)"
+        ),
+    )
 
     # --- mcp ---
     mcp_parser = sub.add_parser("mcp", help="Generated MCP server commands")
@@ -3942,6 +4689,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     skill_show_p = skill_sub.add_parser("show", help="Print skill manifest + SKILL.md preview")
     skill_show_p.add_argument("skill_id", help="Skill ID")
+    skill_show_p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Run each operation with --help as a smoke test; fail fast on import errors / missing deps",
+    )
 
     skill_install_p = skill_sub.add_parser(
         "install", help="Install skill into a specific agent's skills directory"
@@ -3960,6 +4712,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "--project",
         action="store_true",
         help="Install to the project-scoped path for this agent (e.g. .claude/skills/, .agents/skills/) instead of the global path",
+    )
+    skill_install_p.add_argument(
+        "--symlink",
+        action="store_true",
+        help="Symlink the install path to the workbench source for in-place dev iteration (edits propagate both ways)",
+    )
+    skill_install_p.add_argument(
+        "--with-env",
+        choices=("auto", "uv", "venv", "none"),
+        default="none",
+        help=(
+            "Provision a Python virtualenv inside the installed skill so its deps are available. "
+            "`auto` tries uv, falls back to venv. In --symlink mode the env lands in the workbench source."
+        ),
+    )
+
+    skill_docs_p = skill_sub.add_parser(
+        "docs", help="Regenerate SKILL.md + API.md from manifest, preserving custom-fenced regions"
+    )
+    skill_docs_p.add_argument("skill_id", help="Skill ID")
+    skill_docs_p.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero if docs differ from regeneration; do not overwrite",
     )
 
     skill_uninstall_p = skill_sub.add_parser("uninstall", help="Uninstall a skill")
@@ -4014,6 +4790,16 @@ def _build_parser() -> argparse.ArgumentParser:
     ap_export.add_argument("workflow_session_id", help="Workflow session ID")
     ap_export.add_argument("capture_session_id", help="Capture session ID")
     ap_export.add_argument("--profile-slug", default="", help="Tabby profile slug for auth")
+    ap_export.add_argument(
+        "--execution-mode",
+        default="cdp",
+        choices=["cdp", "http"],
+        dest="execution_mode",
+        help=(
+            "Execution strategy: 'cdp' (default, runs inside Tabby's browser) "
+            "or 'http' (legacy httpx + resolve_auth)"
+        ),
+    )
 
     # Browser command passthrough — lets Claude Code drive the browser from the CLI
     ap_browser = ap_sub.add_parser("browser", help="Execute a browser command via the extension")
@@ -4076,6 +4862,26 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PROFILE_ID",
         default=None,
         help="Profile to ensure (default: the only configured profile)",
+    )
+    ensure_p.add_argument(
+        "--open",
+        dest="open_url",
+        metavar="URL",
+        default=None,
+        help=(
+            "After the session is HEALTHY, navigate the browser tab to URL so the site's "
+            "session cookies provision before any subsequent tool call"
+        ),
+    )
+    ensure_p.add_argument(
+        "--skill",
+        dest="open_skill",
+        metavar="SKILL_ID",
+        default=None,
+        help=(
+            "Shortcut: pull the start URL from a generated skill's manifest "
+            "(workflow.start_url) instead of passing --open directly"
+        ),
     )
 
     stop_sess_p = tabby_session_sub.add_parser("stop", help="Stop the locally-running worker")
@@ -4159,13 +4965,14 @@ def _dispatch_mcp(args: argparse.Namespace) -> int:
 def _dispatch_skill(args: argparse.Namespace) -> int:
     cmd = getattr(args, "skill_command", None)
     if cmd is None:
-        print("Usage: noui skill {list,show,install,uninstall}")
+        print("Usage: noui skill {list,show,install,uninstall,docs}")
         return 1
     dispatch = {
         "list": cmd_skill_list,
         "show": cmd_skill_show,
         "install": cmd_skill_install,
         "uninstall": cmd_skill_uninstall,
+        "docs": cmd_skill_docs,
     }
     fn = dispatch.get(cmd)
     if fn is None:

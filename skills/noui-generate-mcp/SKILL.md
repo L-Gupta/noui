@@ -11,6 +11,8 @@ All commands run from the `noui/` directory using `.venv/bin/python cli/main.py`
 
 **Prerequisite:** At least one server must exist under `workbench/mcp_servers/`. Run `/noui-record-workflow` first if none exist.
 
+**How requests are executed:** by default, each tool opens a WebSocket to Tabby's CDP endpoint and runs `fetch(..., {credentials: 'include'})` inside the authenticated browser. A live Tabby session with the target site open is required at invocation time. See `/noui-record-workflow` → *How Execution Works* for the full explanation and the `--execution-mode http` escape hatch.
+
 ---
 
 ## Critical Rules (Never Violate)

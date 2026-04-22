@@ -293,6 +293,13 @@ async def export_workflow(
         "",
         description="ABCD capture session ID to use instead of workflow session data",
     ),
+    execution_mode: str = Query(
+        "cdp",
+        description=(
+            "Execution strategy: 'cdp' (default — operations run inside Tabby's "
+            "browser via CDP) or 'http' (legacy httpx + resolve_auth)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Compile a workflow recording into an MCP server, a Skill, or both.
@@ -308,6 +315,11 @@ async def export_workflow(
         raise HTTPException(
             status_code=422,
             detail=f"Invalid `as` value {target!r}. Expected 'mcp', 'skill', or 'both'.",
+        )
+    if execution_mode not in ("cdp", "http"):
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Invalid execution_mode {execution_mode!r}. Expected 'cdp' or 'http'."),
         )
 
     session, app_slug, har, click_dicts, url_dicts = await _load_compile_inputs(
@@ -333,6 +345,7 @@ async def export_workflow(
                 output_dir=mcp_output_dir,
                 profile_slug=profile_slug,
                 profile_db_id=profile_db_id,
+                execution_mode=execution_mode,
             )
         except Exception as exc:
             logger.exception("MCP compilation failed for session %s", session_id)
@@ -357,6 +370,8 @@ async def export_workflow(
                 profile_slug=profile_slug,
                 profile_db_id=profile_db_id,
                 description_override=description_override,
+                execution_mode=execution_mode,
+                start_url=session.start_url or "",
             )
         except Exception as exc:
             logger.exception("Skill compilation failed for session %s", session_id)

@@ -157,3 +157,5 @@ Start
 | Extension shows "Manifest file is missing" | Confirm you selected `noui/extension/` (the dir containing `manifest.json`) |
 | Extension loads but popup is blank | Check `chrome://extensions/` for errors; remove and re-load unpacked |
 | Port 8002 already in use on start | `lsof -i :8002` to find conflicting process; set `NOUI_PORT=8003` in `.env` to use another port |
+| Generated tool raises "No Tabby page matching ..." | Open the target site in the Tabby browser, or `tabby session ensure --profile <slug>` |
+| Generated tool raises `Connection refused` on port 9222 | Tabby's CDP endpoint is down — `tabby session ensure --profile <slug>` |

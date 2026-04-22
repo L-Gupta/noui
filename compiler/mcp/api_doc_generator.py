@@ -61,8 +61,15 @@ def generate_api_markdown(
     tool_defs: list[dict],
     tabby_profile_id: str,
     generated_at: str | None = None,
+    existing: str | None = None,
 ) -> str:
-    """Return the full API.md content for a generated MCP server."""
+    """Return the full API.md content for a generated MCP server.
+
+    Args:
+        existing: Optional prior file contents. If provided, `<!-- custom:start:NAME -->`
+            regions in `existing` are spliced into the freshly-rendered output,
+            preserving hand-edited notes across regeneration.
+    """
     if generated_at is None:
         generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -103,7 +110,22 @@ def generate_api_markdown(
         lines.extend(_format_tool_section(td, tabby_profile_id))
         lines.append("")
 
-    return "\n".join(lines)
+    # ── Custom-fenced notes (survive regeneration) ────────────────────────────
+    lines.append("## Notes")
+    lines.append("")
+    lines.append("<!-- custom:start:api-notes -->")
+    lines.append(
+        "<!-- Add hand-written API notes here; this region survives `mcp docs` / `skill docs`. -->"
+    )
+    lines.append("<!-- custom:end:api-notes -->")
+    lines.append("")
+
+    rendered = "\n".join(lines)
+    if existing:
+        from compiler.markdown_sections import merge_custom_sections
+
+        rendered = merge_custom_sections(existing, rendered)
+    return rendered
 
 
 # ---------------------------------------------------------------------------
