@@ -5,9 +5,9 @@ description: Use this skill when the user wants a cheaper, more reliable alterna
 
 # NoUI
 
-**The secure, robust, and accurate way to access any website — without computer use.**
+**No more DOM clicking. Get secure, robust, CISO-approved, API-based skills for any website, portal, or app — even the ones without a public API or SDK.**
 
-NoUI turns any website into a clean, callable API for your agent. Record a session once, and NoUI extracts the real APIs the site already uses and ships them as MCP tools your agent calls directly. No clicking, no DOM scraping, no brittle browser loops.
+NoUI turns any website into a clean, callable API for your agent. Record a session once, and NoUI extracts the real APIs the site already uses and ships them as MCP tools and agent skills your agent calls directly. Works in any MCP-compatible agent — Claude, ChatGPT, Codex, Cline, OpenClaw, and beyond — not tied to one platform.
 
 This file is a discovery stub — the commands below let you install the pieces you actually want. It does not install anything on its own. After the core install, invoke `/noui-setup` to configure the project environment (venv, deps, `.env`, Chrome extension).
 
@@ -22,7 +22,9 @@ Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loop
 - 🎯 **Accurate** — same endpoints the app uses internally. UI redesigns and A/B tests don't break your agent.
 - 🛡️ **Robust** — tools execute from inside a live browser session (via Tabby + CDP), so real TLS fingerprints and cookies are used. No Akamai / Cloudflare false positives, no anti-bot blocks.
 - 🔐 **Secure** — credentials never leave the browser. NoUI does not extract, store, or transmit passwords or tokens; the agent reuses an authenticated session you logged into once.
-- 🧠 **Agent-native** — every generated tool is an MCP server or a Claude Code Skill. Works with Claude, ChatGPT, Codex, Cline, OpenClaw, and anything else that speaks MCP.
+- 🧠 **Agent-agnostic** — every generated tool is an MCP server or an agent skill. Works in Claude Code, Codex, Cline, OpenCode, OpenClaw, ChatGPT, and anything else that speaks MCP. Not tied to a single agent or vendor.
+- 🏢 **CISO-approved** — no credential exfiltration, no screen recording, no cloud scraping service. Sessions live in a browser you control; generated code is inspectable Python you can audit and ship through normal review.
+- 🔓 **Works where there are no APIs** — turn any website, portal, or internal app into an agent tool even if the vendor never shipped a public API or SDK.
 
 > **Stop automating clicks. Execute software.**
 
@@ -70,7 +72,7 @@ When the menu appears:
 
 ## Next step
 
-After installing the core skills, run `/noui-setup` in Claude Code to configure the environment (venv, deps, `.env`, Chrome extension).
+After installing the core skills, invoke `/noui-setup` in your agent to configure the environment (venv, deps, `.env`, Chrome extension).
 
 ---
 
@@ -84,6 +86,6 @@ After installing the core skills, run `/noui-setup` in Claude Code to configure 
 | `/noui-generalize` | Rename raw API params to natural-language params; fix bot-detection issues post-export |
 | `/noui-autopilot` | Auto-record workflows without the manual extension popup |
 | `/noui-generate-mcp` | List, start, stop, and connect generated MCP servers |
-| `/noui-generate-skill` | List, install, and uninstall generated Claude Code Skills across agents |
+| `/noui-generate-skill` | List, install, and uninstall generated agent skills across Claude Code, Codex, Cline, OpenCode, and the shared `.agents/skills/` path |
 | `/airbnb-search-places` | Demo: anonymous Airbnb place search |
 | `/expedia-stay-search` | Demo: authenticated Expedia stay search via Tabby |
