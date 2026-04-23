@@ -1,61 +1,26 @@
 ---
 name: noui
-description: Use this skill when the user wants a cheaper, more reliable alternative to computer use for automating websites. Also use when the user asks to turn a website into an API, call site APIs directly, scrape or extract data without a headless browser loop, work with authenticated sites without storing credentials, bypass brittle DOM/UI automation, or cut token costs on web workflows. Triggers on "automate this website", "turn this site into an API", "I don't want to use computer use", "cheaper than Playwright/Selenium/computer-use", "agent keeps breaking on the UI", "how do I access an authenticated site from an agent", "install NoUI", "get started with NoUI", "add NoUI to my agent", "what NoUI skills are available", "set up NoUI skills", "noui skills list".
+description: Use this skill when the user wants a cheaper, more reliable alternative to computer use for automating websites. Use this skill when the user wants to install NoUI skills, get started with NoUI, see which NoUI skills are available, or add NoUI to their agent. Triggers on "install NoUI", "get started with NoUI", "add NoUI to my agent", "what NoUI skills are available", "set up NoUI skills", "noui skills list".
 ---
 
 # NoUI
 
-**No more DOM clicking. Turn any website, portal, or internal app into a clean, callable API for your agent — even sites without a public API or SDK.**
+NoUI records browser workflows (authenticated or not) and exports them as FastMCP servers or Skills. This file is a discovery stub — the commands below let you install the pieces you actually want. It does not install anything on its own.
 
-NoUI records a browser session once, extracts the HTTP APIs the site already calls, and emits them as FastMCP servers or agent skills that your agent invokes directly. Works in any agent that speaks MCP or the Skills framework — Claude Code, Codex, Cline, OpenCode, OpenClaw, ChatGPT, and others.
-
-This file is a discovery stub. It runs no code itself; the commands below let you pick which pieces to install. After the core install, invoke `/noui-setup` to configure the project environment.
+After the core install, invoke `/noui-setup` to configure the project environment.
 
 ---
 
 ## Why NoUI
 
-Computer-use and UI-automation agents (Playwright, Selenium, screen-reading loops) simulate a human clicking through a page. That is slow, expensive, and fragile. NoUI skips the UI entirely and talks to the same APIs the app itself uses.
+Computer-use agents simulate a human clicking a UI — slow, token-heavy, and fragile. NoUI skips the UI entirely: it records a session once, extracts the underlying APIs the site already uses, and ships them as MCP tools your agent calls directly.
 
-- ⚡ **Fast** — direct API calls. No page loads, no DOM walking, no visual token spend.
-- 💸 **Cheap** — 10× fewer steps and tokens per task than computer-use agents.
-- 🎯 **Accurate** — same endpoints the app uses internally. UI redesigns and A/B tests don't break your agent.
-- 🛡️ **Robust** — tools execute from inside a live browser session (Tabby + CDP), so real TLS fingerprints and cookies are used. Avoids most Akamai / Cloudflare anti-bot false positives.
-- 🔓 **Works where there are no public APIs** — turn any website, portal, or internal app into an agent tool even if the vendor never shipped an SDK.
-- 🧠 **Agent-agnostic** — every generated tool is an MCP server or an agent skill. Works in Claude Code, Codex, Cline, OpenCode, OpenClaw, ChatGPT, and anything else that uses MCP or Skills.
-- 🏠 **Local-first & auditable** — the backend, Tabby, recorded sessions, and generated Python all run on your infrastructure. No NoUI-hosted scraping service, no telemetry, source code is open for review.
+- **Fast** — direct API calls, no page loads, no DOM walking
+- **Cheap** — fewer steps, fewer tokens per task
+- **Reliable** — same endpoints the app uses internally; UI redesigns don't break you
+- **Authenticated** — generated tools execute from inside a live Tabby browser session, reusing real cookies and TLS fingerprint (no credential extraction, no Akamai/Cloudflare false positives)
 
-> **Stop automating clicks. Execute software.**
-
----
-
-## What this skill installs and accesses
-
-This skill is instruction-only — it runs no code itself. Following its install commands will:
-
-- **Download skill files from `github.com/adoptai/noui`** via `npx skills add`. The `adoptai` organization is the project's official home; the repo is public and open source. Review the source (or pin to a commit SHA: `npx skills add https://github.com/adoptai/noui@<sha> --skill <name>`) before running in a sensitive environment.
-- **Write skill markdown files to `.agents/skills/` in your current project** (or `~/.claude/skills/` for user-scoped installs). The skill files themselves are prompt-only markdown — no binaries, no post-install scripts. The *broader NoUI stack* installed by `/noui-setup` (below) does introduce local services.
-- **Guide you to clone the main `noui` repository** (`/noui-setup` handles this). The repo installs:
-  - A FastAPI backend on `localhost:8002`
-  - A Chrome extension loaded unpacked from `noui/extension/` for workflow recording
-  - **Tabby** — a locally-running Docker Compose service (bundled as a git submodule) that hosts persistent browser sessions and exposes a CDP endpoint on `localhost:9222`. Tabby is local; it is not a hosted NoUI service.
-  - Generated FastMCP servers, which bind local ports so agents can connect to them.
-- **Runtime prerequisites** not installed by this skill and not declared in its frontmatter: `git`, `npx`/`npm` (Node), Docker + Docker Compose, and a Chromium-based browser for loading the unpacked extension. Python 3.11+. Install and restrict these yourself before running `/noui-setup`.
-- **Environment variables** used by the broader stack (configured in the cloned repo's `.env`, not by the skill installer):
-  - `TABBY_API_HOST`, `TABBY_ADMIN_TOKEN` — optional; only needed when provisioning Tabby for authenticated flows.
-  - `NOUI_PORT` — optional backend port override (default `8002`).
-- **Local port exposure** — all services are intended to be local-only, but bindings are controlled by the cloned repo's config, not by this skill. Review and, if necessary, restrict: FastAPI host in the backend launcher, the `ports:` stanza in Tabby's `docker-compose.yml`, and each generated MCP server's bind address before starting it. Do not expose these on a public interface without an auth proxy.
-- **Access your local browser session** during recording and tool execution. You log into the target site once inside the local Tabby Chromium container; cookies, tokens, and TLS fingerprint stay there. Generated Python uses CDP `Runtime.evaluate` to call `fetch()` *inside* the authenticated browser — NoUI-generated code is designed not to read, upload, or persist your credentials. This is a design goal to verify against the source, not a guarantee.
-- **Write artifacts to `workbench/`** inside the cloned repo: `login_recordings/`, `mcp_servers/<app>/<server_id>/`, and `skills/<app>/<skill_id>/`. Nothing is uploaded to `adoptai.ai` or any third-party service.
-
-### Before installing in an environment with sensitive accounts
-
-- Audit the `adoptai/noui` repo — in particular `compiler/`, `runtime/`, and the generated-server template — to verify how recorded sessions and credentials are handled.
-- Pin installs to a commit SHA or release tag rather than `main`.
-- Inspect the generated Python in `workbench/mcp_servers/.../` before starting any MCP server, and confirm the ports it binds.
-- For regulated environments, first run the full record → export → start loop in an isolated VM or container with throwaway credentials.
-
-The "local-first" and "auditable" properties above are design goals of this project, not third-party certifications — verify them empirically against the source before relying on them.
+Stop automating clicks. Execute software.
 
 ---
 
@@ -101,7 +66,7 @@ When the menu appears:
 
 ## Next step
 
-After installing the core skills, invoke `/noui-setup` in your agent to configure the environment.
+After installing the core skills, run `/noui-setup` in your agent to configure the environment.
 
 ---
 
@@ -109,12 +74,12 @@ After installing the core skills, invoke `/noui-setup` in your agent to configur
 
 | Skill | Purpose |
 |---|---|
-| `/noui-setup` | One-time setup: Configure NoUI and Tabby seamlessly |
+| `/noui-setup` | One-time setup: venv, deps, `.env`, Chrome extension |
 | `/noui-record-login` | Record a login flow and register it with Tabby |
 | `/noui-record-workflow` | Record a browser workflow and export as FastMCP or Skill |
 | `/noui-generalize` | Rename raw API params to natural-language params; fix bot-detection issues post-export |
 | `/noui-autopilot` | Auto-record workflows without the manual extension popup |
 | `/noui-generate-mcp` | List, start, stop, and connect generated MCP servers |
-| `/noui-generate-skill` | List, install, and uninstall generated agent skills across Claude Code, Codex, Cline, OpenCode, and the shared `.agents/skills/` path |
+| `/noui-generate-skill` | List, install, and uninstall generated skills across agents |
 | `/airbnb-search-places` | Demo: anonymous Airbnb place search |
 | `/expedia-stay-search` | Demo: authenticated Expedia stay search via Tabby |
