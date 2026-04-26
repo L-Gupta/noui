@@ -12,10 +12,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 _NOUI_ROOT = Path(__file__).resolve().parent.parent
 if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
+from compiler.mcp.har_to_tools import HarValidationError
 from compiler.skill.skill_generator import compile_workflow_to_skill
 
 
@@ -418,3 +421,49 @@ class TestSkillExecutionModeValidation:
                 _har([_entry("https://api.example.com/widgets")]),
                 execution_mode="grpc",
             )
+
+
+# ---------------------------------------------------------------------------
+# Empty / non-API HARs must be rejected at the same layer as the MCP compiler
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyHarRejected:
+    def test_empty_entries_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="no entries"):
+            _compile(_har([]), app_slug="empty-skill")
+
+    def test_only_static_assets_raises(self) -> None:
+        har = _har(
+            [
+                _entry("https://cdn.example.com/bundle.js", status=200),
+                _entry("https://cdn.example.com/style.css", status=200),
+            ]
+        )
+        with pytest.raises(HarValidationError, match="none look like API calls"):
+            _compile(har, app_slug="static-only-skill")
+
+    def test_missing_log_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="log.entries"):
+            _compile({}, app_slug="malformed-skill")
+
+    def test_no_skill_files_written_on_failure(self) -> None:
+        tmp = Path(tempfile.mkdtemp())
+        with pytest.raises(HarValidationError):
+            compile_workflow_to_skill(
+                session_id="abcdef12-3456-7890-abcd-ef1234567890",
+                session_name="Empty",
+                app_slug="empty-skill",
+                tabby_profile_id="",
+                har=_har([]),
+                click_events=[],
+                url_events=[],
+                output_dir=str(tmp),
+            )
+        # The output dir may exist (the compiler mkdir's it) but no generated
+        # source files should have been written.
+        generated = {p.name for p in tmp.rglob("*") if p.is_file()}
+        forbidden = {"SKILL.md", "manifest.json", "API.md"}
+        assert not (generated & forbidden), (
+            f"Skill compiler wrote artifacts on validation failure: {generated & forbidden}"
+        )

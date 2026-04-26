@@ -22,10 +22,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 _NOUI_ROOT = Path(__file__).resolve().parent.parent
 if str(_NOUI_ROOT) not in sys.path:
     sys.path.insert(0, str(_NOUI_ROOT))
 
+from compiler.mcp.har_to_tools import HarValidationError
 from compiler.mcp.server_generator import compile_workflow
 
 # ---------------------------------------------------------------------------
@@ -607,3 +610,56 @@ class TestExecutionModeValidation:
         har = _har([_entry("https://api.example.com/x")])
         with pytest.raises(ValueError, match="execution_mode"):
             _compile(har, app_slug="bad", execution_mode="grpc")
+
+
+# ---------------------------------------------------------------------------
+# Scenario 13: Empty / non-API HARs must not produce a zero-tool server
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyHarRejected:
+    """Empty or non-API HARs must raise HarValidationError instead of writing
+    a successful-looking but useless MCP server tree."""
+
+    def test_empty_entries_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="no entries"):
+            _compile(_har([]), app_slug="empty-app")
+
+    def test_only_static_assets_raises(self) -> None:
+        har = _har(
+            [
+                _entry("https://cdn.example.com/bundle.js", status=200),
+                _entry("https://cdn.example.com/style.css", status=200),
+            ]
+        )
+        with pytest.raises(HarValidationError, match="none look like API calls"):
+            _compile(har, app_slug="static-only")
+
+    def test_missing_log_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="log.entries"):
+            _compile({}, app_slug="malformed")
+
+    def test_no_server_files_written_on_failure(self) -> None:
+        """When validation fails, callers must not see a half-written server tree."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "empty-app" / "empty-app-test1234"
+            with pytest.raises(HarValidationError):
+                compile_workflow(
+                    session_id="test1234-0000-0000-0000-000000000000",
+                    session_name="Empty",
+                    app_slug="empty-app",
+                    tabby_profile_id="",
+                    har=_har([]),
+                    click_events=[],
+                    url_events=[],
+                    output_dir=str(out),
+                )
+            # The compiler may or may not have created the parent directory
+            # depending on where it raises, but it must not have written any
+            # generated source files (server.py, tools.json, manifest.json).
+            if out.exists():
+                generated = {p.name for p in out.rglob("*") if p.is_file()}
+                forbidden = {"server.py", "tools.json", "manifest.json", "API.md"}
+                assert not (generated & forbidden), (
+                    f"Compiler wrote artifacts on validation failure: {generated & forbidden}"
+                )
