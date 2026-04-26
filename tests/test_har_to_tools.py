@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from compiler.mcp.har_to_tools import (
+    HarValidationError,
     _body_to_params,
     _id_param_name,
     _is_api_call,
@@ -210,9 +213,21 @@ def _htd(har: dict, workflow_name: str = "W", profile: str = "") -> list[dict]:
 
 
 class TestHarToToolDefs:
-    def test_empty_har_returns_empty(self) -> None:
-        assert _htd({"log": {"entries": []}}) == []
-        assert _htd({}) == []
+    def test_empty_entries_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="no entries"):
+            _htd({"log": {"entries": []}})
+
+    def test_missing_log_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="log.entries"):
+            _htd({})
+
+    def test_log_without_entries_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="log.entries"):
+            _htd({"log": {"version": "1.2"}})
+
+    def test_non_dict_har_raises(self) -> None:
+        with pytest.raises(HarValidationError, match="JSON object"):
+            _htd("not a dict")  # type: ignore[arg-type]
 
     def test_single_entry(self) -> None:
         har = _har([_entry(url="https://api.example.com/v1/users")])
@@ -245,15 +260,35 @@ class TestHarToToolDefs:
         result = _htd(har)
         assert len(result) == 2
 
-    def test_skips_non_api_entries(self) -> None:
+    def test_only_static_assets_raises(self) -> None:
         har = _har(
             [
                 _entry(url="https://cdn.example.com/app.js", resp_mime="", status=200),
+                _entry(url="https://cdn.example.com/style.css", resp_mime="", status=200),
             ]
         )
-        # JS files should be filtered — check they don't appear in results
+        with pytest.raises(HarValidationError, match="none look like API calls"):
+            _htd(har)
+
+    def test_only_redirects_raises(self) -> None:
+        har = _har(
+            [
+                _entry(url="https://example.com/redirect", status=302, resp_mime=""),
+            ]
+        )
+        with pytest.raises(HarValidationError, match="none look like API calls"):
+            _htd(har)
+
+    def test_mixed_static_and_api_keeps_api(self) -> None:
+        har = _har(
+            [
+                _entry(url="https://cdn.example.com/app.js", resp_mime="", status=200),
+                _entry(url="https://api.example.com/v1/users"),
+            ]
+        )
         result = _htd(har)
-        assert not any("app.js" in r.get("url", "") for r in result)
+        assert len(result) == 1
+        assert "users" in result[0]["url"]
 
     def test_auth_header_detected(self) -> None:
         har = _har(

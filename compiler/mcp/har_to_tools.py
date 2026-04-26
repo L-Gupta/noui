@@ -27,6 +27,21 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 # ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class HarValidationError(ValueError):
+    """Raised when a HAR cannot be turned into any usable tool definitions.
+
+    This is a *user-correctable* error: the capture itself was empty, malformed,
+    or contained only static assets / non-API traffic. Callers (the MCP and
+    Skill compilers, and the workflow export endpoint) should surface the
+    message back to the user rather than emitting an empty server.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -45,12 +60,43 @@ def har_to_tool_defs(
         workflow_name: Human-readable workflow name used in auto-descriptions.
         tabby_profile_id: Non-empty when the workflow is authenticated.
         auth_cookie_names: Additional cookie names to treat as auth tokens.
-    """
-    entries: list[dict] = har.get("log", {}).get("entries", [])
-    if not entries:
-        return []
 
-    api_entries = [e for e in entries if _is_api_call(e)]
+    Raises:
+        HarValidationError: If the HAR is malformed, has no entries, or yields
+            no API-like requests after filtering. The message is safe to show
+            to end users.
+    """
+    if not isinstance(har, dict):
+        raise HarValidationError(
+            "HAR must be a JSON object with a top-level 'log' key, "
+            f"got {type(har).__name__}."
+        )
+
+    log = har.get("log")
+    if not isinstance(log, dict) or "entries" not in log:
+        raise HarValidationError(
+            "HAR is missing the 'log.entries' array. The capture file does not "
+            "look like a valid HAR 1.2 document — re-record the workflow and "
+            "ensure the browser exported network traffic."
+        )
+
+    entries = log.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise HarValidationError(
+            "HAR contains no entries. The browser did not record any network "
+            "traffic for this workflow — re-record while interacting with the "
+            "site so requests are captured."
+        )
+
+    api_entries = [e for e in entries if isinstance(e, dict) and _is_api_call(e)]
+
+    if not api_entries:
+        raise HarValidationError(
+            f"HAR has {len(entries)} entries but none look like API calls "
+            "after filtering static assets, redirects, and analytics. "
+            "Re-record the workflow and trigger the action whose API you want "
+            "to expose (e.g. submit a form, load data, click a button)."
+        )
 
     # Deduplicate: keep the first representative per (method, base_url, path_pattern).
     seen: dict[tuple[str, str, str], dict] = {}
