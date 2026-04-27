@@ -68,8 +68,7 @@ def har_to_tool_defs(
     """
     if not isinstance(har, dict):
         raise HarValidationError(
-            "HAR must be a JSON object with a top-level 'log' key, "
-            f"got {type(har).__name__}."
+            f"HAR must be a JSON object with a top-level 'log' key, got {type(har).__name__}."
         )
 
     log = har.get("log")
