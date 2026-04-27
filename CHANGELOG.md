@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/noui-record-workflow` skill now documents the CDP default under *How
   Execution Works*; `/noui-generalize` reframed around hand-edit cases on top
   of the default (SPA DOM scraping, HITL login).
+- CLI now loads the repo-root `.env` (matching `backend/config.py`) so
+  `TABBY_API_HOST` set in `.env` is honoured by every `noui` subcommand
+  instead of being silently ignored. Values without a scheme (e.g.
+  `localhost:8080`) are normalised to `http://localhost:8080` and trailing
+  slashes are stripped, eliminating opaque `urlopen` failures.
 
 ### Added
 
