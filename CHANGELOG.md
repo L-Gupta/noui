@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/noui-record-workflow` skill now documents the CDP default under *How
   Execution Works*; `/noui-generalize` reframed around hand-edit cases on top
   of the default (SPA DOM scraping, HITL login).
+- Compiler now rejects empty, malformed, or no-API HARs early with
+  `HarValidationError` instead of silently generating MCP servers or Skills
+  with zero tools. The workflow export endpoint (`POST /workflow/.../export`)
+  returns `422 Unprocessable Entity` with the validation message for these
+  cases and reserves `500` for unexpected bugs. No output artifacts
+  (`server.py`, `tools.json`, `SKILL.md`, `manifest.json`) are written on
+  failure.
 
 ### Added
 
