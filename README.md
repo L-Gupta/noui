@@ -220,22 +220,30 @@ cp .env.example .env
 
 ## 🤖 Agent Skills
 
-Install the NoUI skills into your project so your Agent (Claude Code, Codex, OpenClaw...) can guide you through the full workflow:
+Start by installing the NoUI entry-point skill — a small discovery guide that lists the core workflow skills and optional demos, and tells your agent (Claude Code, Codex, OpenClaw…) how to install each one:
 
 ```bash
-npx skills add adoptai/noui
+npx skills add https://github.com/adoptai/noui --skill noui
 ```
 
-Then run `/noui-setup` in Claude Code to configure the environment.
+Then invoke `/noui` in your agent — it will list the core workflow skills and optional demos, and you pick what to install. After that, `/noui-setup` configures the project environment.
+
+> **Human users** who prefer an interactive picker can run `npx skills add https://github.com/adoptai/noui` (no `--skill` flag) and tick the skills they want. AI agents must use the per-skill `--skill <name>` form — the interactive selector blocks on stdin.
+
+### Available skills
 
 | Skill | Purpose |
 |---|---|
+| `/noui` | Entry point — lists core and demo install commands |
 | `/noui-setup` | One-time setup: venv, deps, `.env`, Chrome extension, Tabby CLI reference |
 | `/noui-record-login` | Record a login flow and register it with Tabby |
 | `/noui-record-workflow` | Record a workflow and export it as a FastMCP server or Claude Code Skill |
 | `/noui-generalize` | Rename raw API parameters to natural-language equivalents post-export |
+| `/noui-autopilot` | Auto-record workflows without the manual extension popup |
 | `/noui-generate-mcp` | Start, stop, list, and connect generated MCP servers to Claude Code |
 | `/noui-generate-skill` | List, install, and uninstall generated Claude Code Skills across agents |
+| `/airbnb-search-places` | Demo: anonymous Airbnb place search |
+| `/expedia-stay-search` | Demo: authenticated Expedia stay search via Tabby |
 
 ------------------------------------------------------------------------
 
