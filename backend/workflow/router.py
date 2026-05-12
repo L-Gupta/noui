@@ -328,6 +328,8 @@ async def export_workflow(
 
     result: dict = {}
 
+    from compiler.mcp.har_to_tools import HarValidationError
+
     if target in ("mcp", "both"):
         server_id = f"{app_slug}-{session_id[:8]}"
         mcp_output_dir = str(_NOUI_ROOT / "workbench" / "mcp_servers" / app_slug / server_id)
@@ -347,6 +349,9 @@ async def export_workflow(
                 profile_db_id=profile_db_id,
                 execution_mode=execution_mode,
             )
+        except HarValidationError as exc:
+            logger.warning("MCP compilation rejected for session %s: %s", session_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("MCP compilation failed for session %s", session_id)
             raise HTTPException(status_code=500, detail=f"MCP compilation failed: {exc}") from exc
@@ -373,6 +378,9 @@ async def export_workflow(
                 execution_mode=execution_mode,
                 start_url=session.start_url or "",
             )
+        except HarValidationError as exc:
+            logger.warning("Skill compilation rejected for session %s: %s", session_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("Skill compilation failed for session %s", session_id)
             raise HTTPException(status_code=500, detail=f"Skill compilation failed: {exc}") from exc
