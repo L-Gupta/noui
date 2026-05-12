@@ -70,8 +70,21 @@ from urllib.parse import urlparse
 # Paths
 # ---------------------------------------------------------------------------
 
-CLI_DIR = Path(__file__).parent
+CLI_DIR = Path(__file__).resolve().parent
 NOUI_DIR = CLI_DIR.parent
+# Make ``cli`` importable as a package when running this file directly
+# (``python cli/main.py``). When invoked via ``python -m cli.main`` or from
+# tests, ``NOUI_DIR`` is already on the path and the insert is a no-op.
+if str(NOUI_DIR) not in sys.path:
+    sys.path.insert(0, str(NOUI_DIR))
+
+from cli.env import load_env_files, resolve_tabby_api_host  # noqa: E402
+
+# Populate os.environ from the repo-root ``.env`` *before* reading any
+# Tabby/NoUI config below. Mirrors what ``backend/config.py`` already does so
+# the CLI and backend agree on values when launched from the same checkout.
+load_env_files(NOUI_DIR)
+
 WORKBENCH_DIR = NOUI_DIR / "workbench"
 MCP_SERVERS_DIR = WORKBENCH_DIR / "mcp_servers"
 LOGIN_RECORDINGS_DIR = WORKBENCH_DIR / "login_recordings"
@@ -87,7 +100,7 @@ TABBY_DIR = (
     if os.environ.get("TABBY_DIR")
     else NOUI_DIR / "tabby"
 )
-TABBY_API_HOST = os.environ.get("TABBY_API_HOST", "http://localhost:8080")
+TABBY_API_HOST = resolve_tabby_api_host()
 ENV_LOCAL = TABBY_DIR / ".env.local"
 ENV_EXAMPLE = TABBY_DIR / ".env.example"
 
@@ -547,6 +560,18 @@ def _tabby_http(
     except urllib.error.HTTPError as exc:
         body_text = exc.read().decode(errors="replace")
         raise RuntimeError(f"HTTP {exc.code} from {method} {path}: {body_text}") from exc
+    except urllib.error.URLError as exc:
+        # Connection refused, DNS failure, timeout, etc. The underlying OSError
+        # (or socket.timeout) is exposed via exc.reason; surface a clear,
+        # user-actionable message instead of letting the traceback escape.
+        reason = exc.reason
+        if isinstance(reason, TimeoutError):
+            detail = f"timed out after {timeout}s"
+        else:
+            detail = str(reason) or type(reason).__name__
+        raise RuntimeError(
+            f"Cannot reach Tabby at {url} ({detail}). Is Tabby running? Try `noui tabby status`."
+        ) from exc
 
 
 def _tabby_alive() -> bool:
@@ -1053,7 +1078,7 @@ def cmd_login_register(args: argparse.Namespace) -> int:
     print(_green(f"Registered profile '{profile_id}'"))
     print(f"  Application ID       : {_cyan(app_id)}")
     print(f"  ServiceProfile DB ID : {_cyan(profile_db_id)}")
-    print(f"  Tabby profile ID     : {_cyan(profile_db_id)}")
+    print(f"  Tabby profile ID     : {_cyan(profile_id)}")
     print("  Version state        : STAGING")
     print()
     print("  Next steps:")
@@ -1096,11 +1121,12 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
         flush=True,
     )
     deadline = time.time() + 60
+    last_error: Exception | None = None
     while time.time() < deadline:
         time.sleep(3)
         print(".", end="", flush=True)
         try:
-            sessions = _get_sessions(admin_token)
+            sessions = _get_sessions(admin_token, raise_on_error=True)
             healthy = [
                 s for s in sessions if s.get("app_id") == app_id and s.get("state") == "HEALTHY"
             ]
@@ -1121,11 +1147,22 @@ def cmd_login_validate(args: argparse.Namespace) -> int:
                 print()
                 print(_red(f"Session entered failed state: {failed[0].get('state')}"))
                 return 1
-        except (RuntimeError, AssertionError):
-            pass
+        except (RuntimeError, AssertionError) as exc:
+            # Don't abort polling on a single failed call (Tabby may be briefly
+            # restarting). Remember the last error so we can surface it if we
+            # eventually time out instead of swallowing it silently.
+            last_error = exc
     else:
         print()
-        print(_red("No HEALTHY session found within 60s — run: noui tabby session ensure"))
+        if last_error is not None:
+            print(
+                _red(
+                    f"No HEALTHY session found within 60s. Last polling error: {last_error}. "
+                    f"Run: noui tabby session ensure"
+                )
+            )
+        else:
+            print(_red("No HEALTHY session found within 60s — run: noui tabby session ensure"))
         return 1
 
 
@@ -3754,13 +3791,23 @@ def _ensure_service_profile(
 # ---------------------------------------------------------------------------
 
 
-def _get_sessions(admin_token: str) -> list[dict[str, Any]]:
+def _get_sessions(admin_token: str, *, raise_on_error: bool = False) -> list[dict[str, Any]]:
+    """Fetch all browser sessions known to Tabby.
+
+    By default, transport / HTTP failures are swallowed and an empty list is
+    returned so that status-style callers can show "no sessions" without
+    aborting. Pass ``raise_on_error=True`` when the caller needs to distinguish
+    "Tabby is unreachable" from "Tabby returned zero sessions" (for example,
+    inside a polling loop that should surface persistent failures on timeout).
+    """
     try:
         resp = _tabby_http("GET", "/sessions?limit=200", token=admin_token)
         if isinstance(resp, dict):
             return resp.get("data", [])
         return list(resp)  # type: ignore[arg-type]
     except RuntimeError:
+        if raise_on_error:
+            raise
         return []
 
 
