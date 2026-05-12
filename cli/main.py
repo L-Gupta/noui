@@ -70,8 +70,21 @@ from urllib.parse import urlparse
 # Paths
 # ---------------------------------------------------------------------------
 
-CLI_DIR = Path(__file__).parent
+CLI_DIR = Path(__file__).resolve().parent
 NOUI_DIR = CLI_DIR.parent
+# Make ``cli`` importable as a package when running this file directly
+# (``python cli/main.py``). When invoked via ``python -m cli.main`` or from
+# tests, ``NOUI_DIR`` is already on the path and the insert is a no-op.
+if str(NOUI_DIR) not in sys.path:
+    sys.path.insert(0, str(NOUI_DIR))
+
+from cli.env import load_env_files, resolve_tabby_api_host  # noqa: E402
+
+# Populate os.environ from the repo-root ``.env`` *before* reading any
+# Tabby/NoUI config below. Mirrors what ``backend/config.py`` already does so
+# the CLI and backend agree on values when launched from the same checkout.
+load_env_files(NOUI_DIR)
+
 WORKBENCH_DIR = NOUI_DIR / "workbench"
 MCP_SERVERS_DIR = WORKBENCH_DIR / "mcp_servers"
 LOGIN_RECORDINGS_DIR = WORKBENCH_DIR / "login_recordings"
@@ -87,7 +100,7 @@ TABBY_DIR = (
     if os.environ.get("TABBY_DIR")
     else NOUI_DIR / "tabby"
 )
-TABBY_API_HOST = os.environ.get("TABBY_API_HOST", "http://localhost:8080")
+TABBY_API_HOST = resolve_tabby_api_host()
 ENV_LOCAL = TABBY_DIR / ".env.local"
 ENV_EXAMPLE = TABBY_DIR / ".env.example"
 
