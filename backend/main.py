@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 import backend.autopilot.models  # noqa: F401
+import backend.ecommerce.models  # noqa: F401
 import backend.elicitation.models  # noqa: F401
 
 # ── Register all ORM models so their tables are created on startup ────────────
@@ -27,6 +28,7 @@ import backend.workflow.models  # noqa: F401
 from backend.autopilot.router import router as autopilot_router
 from backend.config import settings
 from backend.database import Base, engine
+from backend.ecommerce.router import router as ecommerce_router
 from backend.elicitation.routers.attachments import router as attachments_router
 from backend.elicitation.routers.browser_commands import router as browser_commands_router
 from backend.elicitation.routers.capture_sessions import router as capture_sessions_router
@@ -117,6 +119,7 @@ app.include_router(elicitation_url_events_router)
 app.include_router(login_router, prefix="/login-sessions")
 app.include_router(workflow_router, prefix="/workflow-sessions")
 app.include_router(autopilot_router)
+app.include_router(ecommerce_router)
 
 # ── Elicitation (ABCD) routers ────────────────────────────────────────────────
 app.include_router(projects_router)
