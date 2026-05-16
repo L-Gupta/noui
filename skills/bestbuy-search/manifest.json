@@ -1,0 +1,73 @@
+{
+  "schema_version": "1",
+  "skill_id": "bestbuy-search",
+  "app": {
+    "name": "Best Buy Search",
+    "slug": "bestbuy-search"
+  },
+  "workflow": {
+    "id": "bestbuy-search",
+    "name": "Best Buy Search",
+    "workflow_session_id": "ca123295-c78c-4b06-9c70-124d54939533"
+  },
+  "auth": {
+    "requires_auth": false,
+    "profile_slug": null,
+    "profile_db_id": null,
+    "strategy": "none",
+    "auth_plan_file": null
+  },
+  "runtime": {
+    "type": "claude-code-skill",
+    "entrypoint": "SKILL.md",
+    "operation_style": "subprocess-cli",
+    "python": ">=3.11"
+  },
+  "operations": [
+    {
+      "name": "search_suggestions",
+      "description": "Best Buy autocomplete. Takes a free-text query (e.g. \"laptop\") and returns ranked search-term suggestions, each with a category list and a small set of matching skuIds. Feed the skuIds into lookup_products to get full product cards.",
+      "module": "operations/search_suggestions.py",
+      "entry": "execute",
+      "method": "GET",
+      "path": "/suggest/v1/fragment/suggest/www",
+      "args": [
+        { "name": "query", "type": "string", "required": true,
+          "description": "Free-text query (e.g. \"laptop\", \"usb c cable\")." },
+        { "name": "count", "type": "integer", "required": false, "default": 6,
+          "description": "Max number of suggestions." },
+        { "name": "search_variant", "type": "string", "required": false, "default": "A",
+          "description": "Server-side experiment variant; recording used \"A\"." }
+      ]
+    },
+    {
+      "name": "lookup_products",
+      "description": "Resolve Best Buy skuIds to product cards: title, image, PDP URL, customer rating, review count. Pair with search_suggestions to turn a free-text query into product cards.",
+      "module": "operations/lookup_products.py",
+      "entry": "execute",
+      "method": "GET",
+      "path": "/suggest/v1/fragment/products/www",
+      "args": [
+        { "name": "skuids", "type": "string", "required": true,
+          "description": "Comma-separated skuIds (e.g. \"6619147,6667498,12349296\") or a Python list of strings." }
+      ]
+    }
+  ],
+  "artifacts": {
+    "skill_file": "SKILL.md",
+    "files": [
+      "SKILL.md",
+      "API.md",
+      "operations/__init__.py",
+      "operations/search_suggestions.py",
+      "operations/lookup_products.py"
+    ],
+    "api_docs_file": "API.md"
+  },
+  "generation": {
+    "generated_at": "2026-05-14T23:57:13Z",
+    "generator": "noui",
+    "generator_version": "v1-skill",
+    "generalized_at": "2026-05-15"
+  }
+}
