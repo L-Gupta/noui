@@ -15,13 +15,19 @@
     "profile_slug": null,
     "profile_db_id": null,
     "strategy": "none",
-    "auth_plan_file": null
+    "auth_plan_file": null,
+    "notes": "search_suggestions and lookup_products use anonymous public APIs (no auth). open_product, add_to_cart, and proceed_to_checkout drive the user's live browser session via the NoUI backend and require the user to be signed in to Best Buy in that browser."
   },
   "runtime": {
     "type": "claude-code-skill",
     "entrypoint": "SKILL.md",
     "operation_style": "subprocess-cli",
-    "python": ">=3.11"
+    "python": ">=3.11",
+    "prerequisites": [
+      "NoUI backend running at http://localhost:8002 (python cli/main.py start)",
+      "Chrome extension connected (green dot in extension popup)",
+      "User signed in to Best Buy in the active Chrome tab"
+    ]
   },
   "operations": [
     {
@@ -31,6 +37,8 @@
       "entry": "execute",
       "method": "GET",
       "path": "/suggest/v1/fragment/suggest/www",
+      "requires_browser": false,
+      "requires_human_approval": false,
       "args": [
         { "name": "query", "type": "string", "required": true,
           "description": "Free-text query (e.g. \"laptop\", \"usb c cable\")." },
@@ -47,9 +55,55 @@
       "entry": "execute",
       "method": "GET",
       "path": "/suggest/v1/fragment/products/www",
+      "requires_browser": false,
+      "requires_human_approval": false,
       "args": [
         { "name": "skuids", "type": "string", "required": true,
           "description": "Comma-separated skuIds (e.g. \"6619147,6667498,12349296\") or a Python list of strings." }
+      ]
+    },
+    {
+      "name": "open_product",
+      "description": "Navigate the active browser tab to a Best Buy product detail page. Call this before add_to_cart to make sure the correct product is loaded. Requires the NoUI browser backend.",
+      "module": "operations/open_product.py",
+      "entry": "execute",
+      "method": "BROWSER",
+      "path": "https://www.bestbuy.com{pdp_url}",
+      "requires_browser": true,
+      "requires_human_approval": false,
+      "args": [
+        { "name": "pdp_url", "type": "string", "required": true,
+          "description": "Relative pdpUrl from lookup_products (e.g. \"/product/.../SKU\") or a full Best Buy URL." }
+      ]
+    },
+    {
+      "name": "add_to_cart",
+      "description": "Add the currently open Best Buy product to the cart. REQUIRES HUMAN APPROVAL — must show the product title/URL and ask the user before calling. Clicks the Add to Cart button, waits for confirmation, then navigates to the cart and returns its contents.",
+      "module": "operations/add_to_cart.py",
+      "entry": "execute",
+      "method": "BROWSER",
+      "path": "https://www.bestbuy.com/cart",
+      "requires_browser": true,
+      "requires_human_approval": true,
+      "safety": "Stops immediately if any payment-form indicators are detected. Never types card credentials.",
+      "args": [
+        { "name": "skip_navigation", "type": "boolean", "required": false, "default": false,
+          "description": "Skip navigation; assume browser is already on the product page." }
+      ]
+    },
+    {
+      "name": "proceed_to_checkout",
+      "description": "Proceed from the Best Buy cart through checkout sub-steps and stop at the payment step. REQUIRES HUMAN APPROVAL — must show cart summary and ask the user before calling. Stops hard at any payment-form indicator and never clicks Place Order or Pay Now.",
+      "module": "operations/proceed_to_checkout.py",
+      "entry": "execute",
+      "method": "BROWSER",
+      "path": "https://www.bestbuy.com/checkout",
+      "requires_browser": true,
+      "requires_human_approval": true,
+      "safety": "Hard stops on payment URL patterns, credit-card input fields, and Place Order buttons. Never enters payment credentials.",
+      "args": [
+        { "name": "max_steps", "type": "integer", "required": false, "default": 6,
+          "description": "Max checkout sub-steps to auto-advance through before stopping." }
       ]
     }
   ],
@@ -60,7 +114,12 @@
       "API.md",
       "operations/__init__.py",
       "operations/search_suggestions.py",
-      "operations/lookup_products.py"
+      "operations/lookup_products.py",
+      "operations/open_product.py",
+      "operations/add_to_cart.py",
+      "operations/proceed_to_checkout.py",
+      "noui_runtime/__init__.py",
+      "noui_runtime/browser.py"
     ],
     "api_docs_file": "API.md"
   },
